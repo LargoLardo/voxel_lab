@@ -1,0 +1,17 @@
+run_name: phase4_regeneration
+device: auto
+seed: 42
+world_size: 16
+materials: 4
+hidden_channels: 8
+model_width: 64
+fire_rate: 0.5
+growth_steps: 48
+recovery_steps: 48
+damage_types: [sphere, cuboid, plane, top, core, branch, dropout]
+severities: [0.1, 0.25, 0.5, 0.75]
+success_threshold: 0.85
+success_consecutive: 3
+checkpoints:
+  standard: runs/phase3_conditional/checkpoints/latest.pt
+  regeneration: runs/phase4_regeneration_training/checkpoints/latest.pt

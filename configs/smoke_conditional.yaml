@@ -1,0 +1,16 @@
+run_name: smoke_conditional
+dimensions: 3
+conditional: true
+seed: 7
+device: cpu
+world_size: 12
+batch_size: 4
+materials: 4
+hidden_channels: 2
+model_width: 8
+fire_rate: 1.0
+iterations: 1
+rollout_steps: [2, 2]
+learning_rate: 0.001
+loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5}
+

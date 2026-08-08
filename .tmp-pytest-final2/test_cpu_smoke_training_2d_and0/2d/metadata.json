@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-08-07T08:13:57.020534+00:00",
+  "device": "cpu",
+  "pytorch_version": "2.13.0+cu126",
+  "parameter_count": 130,
+  "random_seeds": [
+    0
+  ],
+  "git_commit": null,
+  "command": "C:\\Users\\login\\voxels\\.venv\\Lib\\site-packages\\pytest\\__main__.py -p no:cacheprovider --basetemp=C:\\Users\\login\\voxels\\.tmp-pytest-final2",
+  "checkpoint_identifier": "latest.pt",
+  "training_seconds": 1.2349690000046394
+}

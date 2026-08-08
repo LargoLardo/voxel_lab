@@ -1,0 +1,47 @@
+base:
+  device: auto
+  seed: 42
+  world_size: 16
+  organisms: 2
+  genome_labels: [0, 1]
+  materials: 4
+  hidden_channels: 8
+  model_width: 64
+  fire_rate: 0.5
+  steps: 48
+  checkpoint: runs/phase3_conditional/checkpoints/latest.pt
+  incident_light: 1.0
+  light_attenuation: 0.7
+  light_absorption: 0.05
+  initial_water: 1.0
+  water_diffusion: 0.1
+  water_absorption: 0.05
+  initial_energy: 1.0
+  energy_diffusion: 0.05
+  maintenance_cost: 0.001
+  growth_cost: 0.1
+  remodeling_cost: 0.01
+scenarios:
+  abundant: {}
+  limited_water: {initial_water: 0.1}
+  limited_light: {incident_light: 0.1}
+  identical_genomes: {genome_labels: [0, 0]}
+  different_genomes: {genome_labels: [0, 1]}
+  equal_distance_source:
+    initial_water: 0.0
+    water_patches: [[14, 8, 8, 3, 1.0]]
+  unequal_distance_source:
+    initial_water: 0.0
+    seed_positions: [[13, 8, 3], [13, 8, 12]]
+    water_patches: [[14, 8, 4, 2, 1.0]]
+  shading:
+    seed_positions: [[10, 8, 8], [13, 8, 8]]
+  uneven_water:
+    initial_water: 0.0
+    water_patches: [[14, 4, 4, 2, 1.0], [14, 12, 12, 1, 0.3]]
+  larger_world:
+    world_size: 24
+    seed_positions: [[21, 12, 8], [21, 12, 16]]
+  procedural_baseline:
+    procedural_baseline: true
+    checkpoint: null

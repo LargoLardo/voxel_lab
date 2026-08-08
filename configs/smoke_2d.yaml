@@ -1,0 +1,15 @@
+run_name: smoke_2d
+dimensions: 2
+conditional: false
+seed: 7
+device: cpu
+world_size: 32
+batch_size: 2
+materials: 3
+hidden_channels: 4
+model_width: 16
+fire_rate: 0.5
+iterations: 2
+rollout_steps: [4, 6]
+learning_rate: 0.001
+loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5}

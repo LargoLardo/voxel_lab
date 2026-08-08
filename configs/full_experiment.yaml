@@ -1,0 +1,7 @@
+commands:
+  - [morphovoxel.train_2d, configs/phase1_2d.yaml]
+  - [morphovoxel.train_3d, configs/phase2_3d.yaml]
+  - [morphovoxel.train_conditional, configs/phase3_conditional.yaml]
+  - [morphovoxel.train_conditional, configs/phase4_regeneration_training.yaml]
+  - [morphovoxel.evaluate_regeneration, configs/phase4_regeneration.yaml]
+  - [morphovoxel.run_ecology, configs/phase5_ecology.yaml]
