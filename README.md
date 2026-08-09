@@ -60,7 +60,7 @@ Interactive local dashboard:
 python -m morphovoxel.ui --open
 ```
 
-The dashboard navigates every preset and saved run, previews GIF/PNG artifacts and metrics, launches edited YAML as isolated UI jobs, streams logs, and can stop active jobs. Its **Design Lab** opens any training run with `config.yaml` and a local `latest.pt`/`best.pt` checkpoint: double-click to place a seed, click or drag to erase, then play, pause, single-step, reset, change a conditional genome, or inspect editable 3D slices and projections. Choose Auto/CPU/CUDA, enable the live organism view, and set **Save/view every N steps** before launch. Smoke presets default to every step; full presets default to every four steps to reduce preview I/O. It binds to `127.0.0.1:8765` by default and adds no web-framework dependency.
+The dashboard navigates every preset and saved run, previews GIF/PNG artifacts and metrics, launches edited YAML as isolated UI jobs, streams logs, and can stop active jobs. Its **Design Lab** opens any training run with `config.yaml` and a local `latest.pt`/`best.pt` checkpoint: double-click to place a seed, click or drag to erase, then play, pause, single-step, reset, change a conditional genome, or inspect editable 3D slices and projections. 3D runs also offer a cube view: drag to rotate, use the wheel to zoom, and switch back to a slice or projection to edit. Choose Auto/CPU/CUDA, enable the live organism view, and set **Save/view every N steps** before launch. Smoke presets default to every step; full presets default to every four steps to reduce preview I/O. It binds to `127.0.0.1:8765` by default and adds no web-framework dependency.
 
 Smoke checks:
 

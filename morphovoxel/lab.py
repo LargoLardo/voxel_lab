@@ -244,3 +244,24 @@ class LabSession:
         output = io.BytesIO()
         Image.fromarray(rgb, "RGB").save(output, format="PNG")
         return output.getvalue()
+
+    def voxel_data(self, threshold: float = 0.1) -> dict[str, object]:
+        """Return visible 3D cells for the browser's interactive cube renderer."""
+        if self.dimensions != 3:
+            raise ValueError("voxel view is only available for 3D runs")
+        occupancy = torch.nan_to_num(self.state[0, self.layout.occupancy].detach()).clamp(0, 1)
+        occupied = occupancy > threshold
+        interior = occupied.clone()
+        interior[[0, -1], :, :] = False
+        interior[:, [0, -1], :] = False
+        interior[:, :, [0, -1]] = False
+        interior[1:-1, 1:-1, 1:-1] &= (
+            occupied[:-2, 1:-1, 1:-1] & occupied[2:, 1:-1, 1:-1]
+            & occupied[1:-1, :-2, 1:-1] & occupied[1:-1, 2:, 1:-1]
+            & occupied[1:-1, 1:-1, :-2] & occupied[1:-1, 1:-1, 2:]
+        )
+        visible = occupied & ~interior
+        coordinates = visible.nonzero()
+        materials = torch.nan_to_num(self.state[0, self.layout.material_slice].detach()).argmax(0)[visible]
+        voxels = torch.cat((coordinates, occupancy[visible, None], materials[:, None]), dim=1).cpu().tolist()
+        return {"shape": list(self.shape), "voxels": voxels, "frame_version": self.version}

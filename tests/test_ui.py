@@ -60,6 +60,8 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         assert "Quick settings" in root
         assert "Design lab" in root
         assert "Double-click to place a seed" in root
+        assert "3D voxels" in root
+        assert "Drag to rotate" in root
         assert "r.status===403&&data.token&&options.body" in root
         assert 'id="frameEvery" type="range"' in root
         assert "steps/s" in root

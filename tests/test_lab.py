@@ -41,6 +41,10 @@ def test_lab_session_seeds_erases_steps_and_renders(tmp_path, dimensions, condit
     position = (1, 2) if dimensions == 2 else (3, 1, 2)
     assert lab.state[(0, 0, *position)] == 1
     assert lab.frame_png(view, layer).startswith(b"\x89PNG")
+    if dimensions == 3:
+        voxels = lab.voxel_data()
+        assert voxels["shape"] == [7, 7, 7]
+        assert voxels["voxels"][0][:3] == [3, 1, 2]
     if conditional:
         assert lab.set_genome(2)["genome"] == 2
     lab.erase(view, 1, 2, layer, radius=1)
@@ -50,6 +54,7 @@ def test_lab_session_seeds_erases_steps_and_renders(tmp_path, dimensions, condit
 
 def test_design_lab_http_api(tmp_path):
     run = _saved_run(tmp_path, 2)
+    run_3d = _saved_run(tmp_path, 3, True)
     stale_server = create_server(tmp_path, port=0)
     stale_token = stale_server.token
     stale_server.server_close()
@@ -80,6 +85,10 @@ def test_design_lab_http_api(tmp_path):
         frame = urlopen(f"http://127.0.0.1:{server.server_port}/api/lab/frame?view=plane&layer=0", timeout=10).read()
         assert frame.startswith(b"\x89PNG")
         assert post("/api/lab/action", action="erase", view="plane", row=1, column=2, layer=0, radius=1)["occupied_cells"] == 0
+        assert post("/api/lab/load", run=run_3d.name, device="cpu")["dimensions"] == 3
+        voxels = json.load(urlopen(f"http://127.0.0.1:{server.server_port}/api/lab/voxels", timeout=10))
+        assert voxels["shape"] == [7, 7, 7]
+        assert len(voxels["voxels"]) == 1
     finally:
         server.shutdown()
         server.server_close()
