@@ -1,0 +1,1177 @@
+{
+  "morphovoxel/__init__.py": {
+    "mtime": 1786073356.13979,
+    "ast_hash": "032f5a9e56edeb9e61840dfd79a2889e",
+    "semantic_hash": "032f5a9e56edeb9e61840dfd79a2889e"
+  },
+  "morphovoxel/checkpointing.py": {
+    "mtime": 1786073511.784794,
+    "ast_hash": "4339658f73eba969194693cb07f69f37",
+    "semantic_hash": "4339658f73eba969194693cb07f69f37"
+  },
+  "morphovoxel/config.py": {
+    "mtime": 1786073356.6643233,
+    "ast_hash": "d9904b3d0dc0f407309b1023aac5da09",
+    "semantic_hash": "d9904b3d0dc0f407309b1023aac5da09"
+  },
+  "morphovoxel/damage/__init__.py": {
+    "mtime": 1786073513.3526423,
+    "ast_hash": "b3746350143932359d313cee95f1f3fc",
+    "semantic_hash": "b3746350143932359d313cee95f1f3fc"
+  },
+  "morphovoxel/damage/operators_2d.py": {
+    "mtime": 1786073513.8928607,
+    "ast_hash": "e3577d1d4a727a48caa8848ed0dd8851",
+    "semantic_hash": "e3577d1d4a727a48caa8848ed0dd8851"
+  },
+  "morphovoxel/damage/operators_3d.py": {
+    "mtime": 1786073514.4884968,
+    "ast_hash": "50ea71303942c2e24af61fe014d09bb0",
+    "semantic_hash": "50ea71303942c2e24af61fe014d09bb0"
+  },
+  "morphovoxel/ecology/__init__.py": {
+    "mtime": 1786073670.0328736,
+    "ast_hash": "3f0903dfc781ca716a915d6fc5b2f76a",
+    "semantic_hash": "3f0903dfc781ca716a915d6fc5b2f76a"
+  },
+  "morphovoxel/ecology/energy.py": {
+    "mtime": 1786075359.6707125,
+    "ast_hash": "0aed40c8c492f3ea4871945c0a7e23e8",
+    "semantic_hash": "0aed40c8c492f3ea4871945c0a7e23e8"
+  },
+  "morphovoxel/ecology/environment.py": {
+    "mtime": 1786073670.6177945,
+    "ast_hash": "9f5b52d15ff75cd52a0b5eb130c05565",
+    "semantic_hash": "9f5b52d15ff75cd52a0b5eb130c05565"
+  },
+  "morphovoxel/ecology/light.py": {
+    "mtime": 1786073671.1442745,
+    "ast_hash": "77d661ad1ec58936fedccbb97571f1d7",
+    "semantic_hash": "77d661ad1ec58936fedccbb97571f1d7"
+  },
+  "morphovoxel/ecology/metrics.py": {
+    "mtime": 1786075204.43187,
+    "ast_hash": "dbfb039a131f3b9f10371efdbf158fba",
+    "semantic_hash": "dbfb039a131f3b9f10371efdbf158fba"
+  },
+  "morphovoxel/ecology/simulator.py": {
+    "mtime": 1786075446.3046086,
+    "ast_hash": "147da0f49a204dd97558fe0fe844926d",
+    "semantic_hash": "147da0f49a204dd97558fe0fe844926d"
+  },
+  "morphovoxel/ecology/water.py": {
+    "mtime": 1786073671.698679,
+    "ast_hash": "24a2e30d1815cff8f792e96a02299f77",
+    "semantic_hash": "24a2e30d1815cff8f792e96a02299f77"
+  },
+  "morphovoxel/evaluate.py": {
+    "mtime": 1786075096.540924,
+    "ast_hash": "1f5d542b42f22d605578e1e688061bbe",
+    "semantic_hash": "1f5d542b42f22d605578e1e688061bbe"
+  },
+  "morphovoxel/evaluate_regeneration.py": {
+    "mtime": 1786087355.204801,
+    "ast_hash": "d73c3d4d6a265e5f9aab8cacdf5a462b",
+    "semantic_hash": ""
+  },
+  "morphovoxel/genomes.py": {
+    "mtime": 1786075082.7612758,
+    "ast_hash": "c8cf2cd8eeee0b82534253c79a03e28f",
+    "semantic_hash": "c8cf2cd8eeee0b82534253c79a03e28f"
+  },
+  "morphovoxel/metrics.py": {
+    "mtime": 1786075096.0162,
+    "ast_hash": "2bf49831ac4ae75cab3971dab7f48208",
+    "semantic_hash": "2bf49831ac4ae75cab3971dab7f48208"
+  },
+  "morphovoxel/model_2d.py": {
+    "mtime": 1786073609.8676927,
+    "ast_hash": "bacd8844d6b3afb0fbbc509c2b36c871",
+    "semantic_hash": "bacd8844d6b3afb0fbbc509c2b36c871"
+  },
+  "morphovoxel/model_3d.py": {
+    "mtime": 1786073610.5031984,
+    "ast_hash": "40ab87cc19dfafc77f083aa854aefb44",
+    "semantic_hash": "40ab87cc19dfafc77f083aa854aefb44"
+  },
+  "morphovoxel/perception_2d.py": {
+    "mtime": 1786073359.5050666,
+    "ast_hash": "f2699f02ba2cd3a79cd448aa047bb388",
+    "semantic_hash": "f2699f02ba2cd3a79cd448aa047bb388"
+  },
+  "morphovoxel/perception_3d.py": {
+    "mtime": 1786073360.0527697,
+    "ast_hash": "5153980fbe2555b5065a3a45d37aae20",
+    "semantic_hash": "5153980fbe2555b5065a3a45d37aae20"
+  },
+  "morphovoxel/plotting.py": {
+    "mtime": 1786074948.3580153,
+    "ast_hash": "549e46a022b84a6363d92a1def754fb8",
+    "semantic_hash": "549e46a022b84a6363d92a1def754fb8"
+  },
+  "morphovoxel/random_utils.py": {
+    "mtime": 1786084747.8253984,
+    "ast_hash": "ac0afe14520a2f3373fb83ec9cfb540a",
+    "semantic_hash": ""
+  },
+  "morphovoxel/rendering_2d.py": {
+    "mtime": 1786074947.122154,
+    "ast_hash": "a13fd9fa53126d852210fd96194b2ee6",
+    "semantic_hash": "a13fd9fa53126d852210fd96194b2ee6"
+  },
+  "morphovoxel/rendering_3d.py": {
+    "mtime": 1786074947.7337022,
+    "ast_hash": "449ee8e4f70f9e7732f546a29d97a8c9",
+    "semantic_hash": "449ee8e4f70f9e7732f546a29d97a8c9"
+  },
+  "morphovoxel/rollout.py": {
+    "mtime": 1786084747.8274002,
+    "ast_hash": "9650abd1eaea2c7320d05cf93e3de03b",
+    "semantic_hash": ""
+  },
+  "morphovoxel/run_ecology.py": {
+    "mtime": 1786087355.204801,
+    "ast_hash": "7f211a30872777ff90260de060f7e6ce",
+    "semantic_hash": ""
+  },
+  "morphovoxel/seeding.py": {
+    "mtime": 1786073358.308225,
+    "ast_hash": "50d9dbf0c05024373701a81aa404c378",
+    "semantic_hash": "50d9dbf0c05024373701a81aa404c378"
+  },
+  "morphovoxel/state.py": {
+    "mtime": 1786073357.7454,
+    "ast_hash": "7b4272b92bb25f16859fd6f90cc28d6f",
+    "semantic_hash": "7b4272b92bb25f16859fd6f90cc28d6f"
+  },
+  "morphovoxel/targets/__init__.py": {
+    "mtime": 1786073440.963988,
+    "ast_hash": "b9e2d231e2aff6828f8eb534677c39c4",
+    "semantic_hash": "b9e2d231e2aff6828f8eb534677c39c4"
+  },
+  "morphovoxel/targets/morphology_library.py": {
+    "mtime": 1786073442.632043,
+    "ast_hash": "2ee2c7dd2312ae99dfd44b9357596273",
+    "semantic_hash": "2ee2c7dd2312ae99dfd44b9357596273"
+  },
+  "morphovoxel/targets/targets_2d.py": {
+    "mtime": 1786073441.5202959,
+    "ast_hash": "b892bee4c434d777763bd23d9984a917",
+    "semantic_hash": "b892bee4c434d777763bd23d9984a917"
+  },
+  "morphovoxel/targets/targets_3d.py": {
+    "mtime": 1786073442.0496023,
+    "ast_hash": "32e2de9a0101d444303ad781faa8d13d",
+    "semantic_hash": "32e2de9a0101d444303ad781faa8d13d"
+  },
+  "morphovoxel/train_2d.py": {
+    "mtime": 1786073726.5669239,
+    "ast_hash": "06e7839582c2ad6405ae2b3e5ad17908",
+    "semantic_hash": "06e7839582c2ad6405ae2b3e5ad17908"
+  },
+  "morphovoxel/train_3d.py": {
+    "mtime": 1786073727.1292136,
+    "ast_hash": "9ccac0167c6cd425488b7d636fd2d805",
+    "semantic_hash": "9ccac0167c6cd425488b7d636fd2d805"
+  },
+  "morphovoxel/train_conditional.py": {
+    "mtime": 1786073727.7266922,
+    "ast_hash": "6a22884738e81b2823d0e18bf3c522af",
+    "semantic_hash": "6a22884738e81b2823d0e18bf3c522af"
+  },
+  "morphovoxel/training/__init__.py": {
+    "mtime": 1786073510.029954,
+    "ast_hash": "d2b743f75dbe365f5df63241e1ee9353",
+    "semantic_hash": "d2b743f75dbe365f5df63241e1ee9353"
+  },
+  "morphovoxel/training/losses.py": {
+    "mtime": 1786073611.0696332,
+    "ast_hash": "0d7730379dd7c0890cdd9ace30e45ad3",
+    "semantic_hash": "0d7730379dd7c0890cdd9ace30e45ad3"
+  },
+  "morphovoxel/training/state_pool.py": {
+    "mtime": 1786073511.2445462,
+    "ast_hash": "1e9514ec50689129bfe8b239e6b7d671",
+    "semantic_hash": "1e9514ec50689129bfe8b239e6b7d671"
+  },
+  "morphovoxel/training/trainer.py": {
+    "mtime": 1786311778.5035052,
+    "ast_hash": "50826436ad7f5b9c21ffc57874921f75",
+    "semantic_hash": ""
+  },
+  "morphovoxel/utils.py": {
+    "mtime": 1786087355.2027972,
+    "ast_hash": "e0655f79b8e77472bf6d32d77f5a431d",
+    "semantic_hash": ""
+  },
+  "morphovoxel/visualize.py": {
+    "mtime": 1786073729.4864306,
+    "ast_hash": "64ff66ac58226eab44eaff89502e1aee",
+    "semantic_hash": "64ff66ac58226eab44eaff89502e1aee"
+  },
+  "pyproject.toml": {
+    "mtime": 1786073354.6966105,
+    "ast_hash": "f2cef6d20e53ce49a83dbd7cc87b7797",
+    "semantic_hash": "f2cef6d20e53ce49a83dbd7cc87b7797"
+  },
+  "scripts/generate_report.py": {
+    "mtime": 1786074902.6864572,
+    "ast_hash": "f553d09c330d56016c3fec79af830a75",
+    "semantic_hash": "f553d09c330d56016c3fec79af830a75"
+  },
+  "scripts/run_ecology_experiment.py": {
+    "mtime": 1786075263.0104156,
+    "ast_hash": "95a1454bf93d7e6fd9a412028f9942ff",
+    "semantic_hash": "95a1454bf93d7e6fd9a412028f9942ff"
+  },
+  "scripts/run_full_experiment.py": {
+    "mtime": 1786085029.475927,
+    "ast_hash": "13060f2c4c219437c43616202fc614ec",
+    "semantic_hash": ""
+  },
+  "scripts/run_interpolation.py": {
+    "mtime": 1786075107.2701173,
+    "ast_hash": "0159e4a9e719e544c6a99e04e551187f",
+    "semantic_hash": "0159e4a9e719e544c6a99e04e551187f"
+  },
+  "scripts/run_regeneration_sweep.py": {
+    "mtime": 1786073873.4631004,
+    "ast_hash": "39616724a7684a76e077d6acacabfbfd",
+    "semantic_hash": "39616724a7684a76e077d6acacabfbfd"
+  },
+  "scripts/run_scaling_experiment.py": {
+    "mtime": 1786073874.5636146,
+    "ast_hash": "b3535642eb427c75370452f522c3af88",
+    "semantic_hash": "b3535642eb427c75370452f522c3af88"
+  },
+  "scripts/run_specialized_baseline.py": {
+    "mtime": 1786073875.1368773,
+    "ast_hash": "15eb3b680569aca56a4615d1e667ec73",
+    "semantic_hash": "15eb3b680569aca56a4615d1e667ec73"
+  },
+  "scripts/summarize_results.py": {
+    "mtime": 1786073876.2253318,
+    "ast_hash": "9834928164a68060ce60b9b4d1e615f8",
+    "semantic_hash": "9834928164a68060ce60b9b4d1e615f8"
+  },
+  "tests/test_checkpointing.py": {
+    "mtime": 1786073949.009601,
+    "ast_hash": "9dd3a4b8f3fdc91605a9102bc2647041",
+    "semantic_hash": "9dd3a4b8f3fdc91605a9102bc2647041"
+  },
+  "tests/test_damage.py": {
+    "mtime": 1786073947.6329587,
+    "ast_hash": "6e7a2b5584b2fb6b02d34dc7dbcd562d",
+    "semantic_hash": "6e7a2b5584b2fb6b02d34dc7dbcd562d"
+  },
+  "tests/test_ecology.py": {
+    "mtime": 1786073953.3037922,
+    "ast_hash": "04f6e383e9af6574a1223dcd4b052e9f",
+    "semantic_hash": "04f6e383e9af6574a1223dcd4b052e9f"
+  },
+  "tests/test_ecology_simulator.py": {
+    "mtime": 1786075481.8468752,
+    "ast_hash": "cbb9cfdd6c9203e52aad9cee459b5d12",
+    "semantic_hash": "cbb9cfdd6c9203e52aad9cee459b5d12"
+  },
+  "tests/test_energy.py": {
+    "mtime": 1786075362.9905496,
+    "ast_hash": "92a5b13f5d4f0f917e995cc528c671c5",
+    "semantic_hash": "92a5b13f5d4f0f917e995cc528c671c5"
+  },
+  "tests/test_genome_conditioning.py": {
+    "mtime": 1786075083.3427043,
+    "ast_hash": "1b4637d40e13b82240b44055bdd08317",
+    "semantic_hash": "1b4637d40e13b82240b44055bdd08317"
+  },
+  "tests/test_light.py": {
+    "mtime": 1786073951.041506,
+    "ast_hash": "9288f0bc21f3eb54e1287773613934d8",
+    "semantic_hash": "9288f0bc21f3eb54e1287773613934d8"
+  },
+  "tests/test_metrics.py": {
+    "mtime": 1786073948.3720121,
+    "ast_hash": "b25203caacf85381b578c5f4cf66bdce",
+    "semantic_hash": "b25203caacf85381b578c5f4cf66bdce"
+  },
+  "tests/test_perception_2d.py": {
+    "mtime": 1786073943.4053211,
+    "ast_hash": "a9bcd8c1b720cbd0621277206fd39bc1",
+    "semantic_hash": "a9bcd8c1b720cbd0621277206fd39bc1"
+  },
+  "tests/test_perception_3d.py": {
+    "mtime": 1786073944.1345313,
+    "ast_hash": "6a8c4b4e93bd2fc602081ad5b797b1e2",
+    "semantic_hash": "6a8c4b4e93bd2fc602081ad5b797b1e2"
+  },
+  "tests/test_reproducibility.py": {
+    "mtime": 1786085149.582528,
+    "ast_hash": "477d72c14ef6a5ec348731f836ec51da",
+    "semantic_hash": ""
+  },
+  "tests/test_scaling.py": {
+    "mtime": 1786073950.4292908,
+    "ast_hash": "02c8cf15c15ecf2eab674bb7234cfb22",
+    "semantic_hash": "02c8cf15c15ecf2eab674bb7234cfb22"
+  },
+  "tests/test_seeding.py": {
+    "mtime": 1786073944.7478788,
+    "ast_hash": "73b545f1ca593ae57aaa88fc8289121e",
+    "semantic_hash": "73b545f1ca593ae57aaa88fc8289121e"
+  },
+  "tests/test_smoke_training.py": {
+    "mtime": 1786311891.8011847,
+    "ast_hash": "49aab28bc411b20a3a96fd686e679277",
+    "semantic_hash": ""
+  },
+  "tests/test_state_pool.py": {
+    "mtime": 1786073946.923677,
+    "ast_hash": "d6ddc1dfba94ea1c94de3748a7600c53",
+    "semantic_hash": "d6ddc1dfba94ea1c94de3748a7600c53"
+  },
+  "tests/test_state_shapes.py": {
+    "mtime": 1786073942.7641258,
+    "ast_hash": "22f0cfe1b4c49158048c5040cb6d69d6",
+    "semantic_hash": "22f0cfe1b4c49158048c5040cb6d69d6"
+  },
+  "tests/test_statistics.py": {
+    "mtime": 1786075072.3747208,
+    "ast_hash": "6f4bc830b9825df734cd2b5d1dc12bef",
+    "semantic_hash": "6f4bc830b9825df734cd2b5d1dc12bef"
+  },
+  "tests/test_target_generation.py": {
+    "mtime": 1786073945.4050403,
+    "ast_hash": "93a2e63b847936a940c68dd8ae1a5988",
+    "semantic_hash": "93a2e63b847936a940c68dd8ae1a5988"
+  },
+  "tests/test_water.py": {
+    "mtime": 1786073951.8142936,
+    "ast_hash": "47dfb459ebaf228a79fc88ba743b8e89",
+    "semantic_hash": "47dfb459ebaf228a79fc88ba743b8e89"
+  },
+  "README.md": {
+    "mtime": 1786312251.5768168,
+    "ast_hash": "1b2621a9d2c3d3c81480186ffa2ee70f",
+    "semantic_hash": ""
+  },
+  "configs/ecology_experiments.yaml": {
+    "mtime": 1786085057.9488983,
+    "ast_hash": "f2860d6e5921be77649d4f1498126e3b",
+    "semantic_hash": ""
+  },
+  "configs/full_experiment.yaml": {
+    "mtime": 1786073822.3940854,
+    "ast_hash": "0a6217771a4928bcf4e910836a32e2d1",
+    "semantic_hash": "0a6217771a4928bcf4e910836a32e2d1"
+  },
+  "configs/phase1_2d.yaml": {
+    "mtime": 1786085057.9448953,
+    "ast_hash": "04b44c9ee90dec5886205fbd50d5181c",
+    "semantic_hash": ""
+  },
+  "configs/phase2_3d.yaml": {
+    "mtime": 1786085057.9458945,
+    "ast_hash": "8130051bc5be8af537ed81fd69cb8ecb",
+    "semantic_hash": ""
+  },
+  "configs/phase3_conditional.yaml": {
+    "mtime": 1786085057.9468977,
+    "ast_hash": "45360fc626ecf1b8738a4b968fa16941",
+    "semantic_hash": ""
+  },
+  "configs/phase4_regeneration.yaml": {
+    "mtime": 1786085057.9478958,
+    "ast_hash": "786b70e709f91b4ea70c7e6be5852b11",
+    "semantic_hash": ""
+  },
+  "configs/phase4_regeneration_training.yaml": {
+    "mtime": 1786085057.9468977,
+    "ast_hash": "9f0a6812f974c71496b38a3a06fcf400",
+    "semantic_hash": ""
+  },
+  "configs/phase5_ecology.yaml": {
+    "mtime": 1786085057.9488983,
+    "ast_hash": "f9d2cb0cf1cb9b369b3ebeeb0c8db133",
+    "semantic_hash": ""
+  },
+  "configs/smoke_2d.yaml": {
+    "mtime": 1786075139.8906722,
+    "ast_hash": "43ef1dcdb73a0644d16d19eeddade270",
+    "semantic_hash": "43ef1dcdb73a0644d16d19eeddade270"
+  },
+  "configs/smoke_3d.yaml": {
+    "mtime": 1786075140.450734,
+    "ast_hash": "aef5f510425300c1fcca331c6fecbf62",
+    "semantic_hash": "aef5f510425300c1fcca331c6fecbf62"
+  },
+  "configs/smoke_conditional.yaml": {
+    "mtime": 1786074987.211374,
+    "ast_hash": "7e47eaad90c901c5f9198b45cbc2185c",
+    "semantic_hash": "7e47eaad90c901c5f9198b45cbc2185c"
+  },
+  "configs/smoke_ecology.yaml": {
+    "mtime": 1786086025.0565686,
+    "ast_hash": "64089f8859ad2e04d10a6f6dbfba1784",
+    "semantic_hash": ""
+  },
+  "configs/smoke_regeneration.yaml": {
+    "mtime": 1786086025.0565686,
+    "ast_hash": "b09a0e7d8b646c3d432ebe23290c58c0",
+    "semantic_hash": ""
+  },
+  "reports/experiment_report.md": {
+    "mtime": 1786074902.1195905,
+    "ast_hash": "755e6a93cfe30c6e18724820fe029dba",
+    "semantic_hash": "755e6a93cfe30c6e18724820fe029dba"
+  },
+  "morphovoxel/ui.py": {
+    "mtime": 1786312237.0682228,
+    "ast_hash": "e040c01774e8ee5af087c18953c7556f",
+    "semantic_hash": ""
+  },
+  "tests/test_ui.py": {
+    "mtime": 1786312251.575817,
+    "ast_hash": "0feea6eadbdd77bd3622ef1d0683d653",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260807_060510_how_can_i_run_see_and_interact_with_the_environmen.md": {
+    "mtime": 1786082710.6052074,
+    "ast_hash": "0dda571f16f0b642ab7635f59ef1fcd4",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260807_062122_please_produce_a_ui_that_i_can_use_to_navigate_thr.md": {
+    "mtime": 1786083682.0362844,
+    "ast_hash": "9f014f37853353e6af106f280ae061d6",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260807_065430_how_does_the_dashboard_select_cpu_or_cuda_and_disp.md": {
+    "mtime": 1786085670.5097146,
+    "ast_hash": "ff878b5c86ed919755af64a72137b89b",
+    "semantic_hash": ""
+  },
+  ".verification-runs/verify_live_rate/metadata.json": {
+    "mtime": 1786087562.530768,
+    "ast_hash": "88760edc8870894ded862b0279d15d81",
+    "semantic_hash": ""
+  },
+  ".verification-runs/verify_live_rate/visualizations/live.json": {
+    "mtime": 1786087561.4703746,
+    "ast_hash": "5f8330f1c9a37782522f6ad8aacc1615",
+    "semantic_hash": ""
+  },
+  ".verification-runs/verify_live_rate/config.yaml": {
+    "mtime": 1786087560.0763152,
+    "ast_hash": "7d12e76536d668d23180679055ac00e0",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260807_071414_permissionerror_replacing_live_json_during_trainin.md": {
+    "mtime": 1786086854.4789195,
+    "ast_hash": "3dcd8d488c1a18bdad0cf9fe036fc840",
+    "semantic_hash": ""
+  },
+  ".verification-runs/verify_live_rate/visualizations/growth.gif": {
+    "mtime": 1786087561.5503752,
+    "ast_hash": "43f15c1e1ddb577f14b310857c167cee",
+    "semantic_hash": ""
+  },
+  ".verification-runs/verify_live_rate/visualizations/hidden_channels.png": {
+    "mtime": 1786087562.2504282,
+    "ast_hash": "998d21e7ce41c273b403e68d46321ae6",
+    "semantic_hash": ""
+  },
+  ".verification-runs/verify_live_rate/visualizations/live.png": {
+    "mtime": 1786087561.4693732,
+    "ast_hash": "6c1ba1128f9d1631bd8169268285c0ab",
+    "semantic_hash": ""
+  },
+  ".verification-runs/verify_live_rate/visualizations/metrics.png": {
+    "mtime": 1786087562.5187664,
+    "ast_hash": "72ef240ac99c7a9b8b71bd64e22fe741",
+    "semantic_hash": ""
+  },
+  ".verification-runs/verify_live_rate/visualizations/target_vs_prediction.png": {
+    "mtime": 1786087561.9239993,
+    "ast_hash": "b989698109321cbbb001aaf186995d8a",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/2d/metadata.json": {
+    "mtime": 1786090438.255781,
+    "ast_hash": "2054f997fd8094ee0233212e739354af",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/2d/visualizations/live.json": {
+    "mtime": 1786090437.567088,
+    "ast_hash": "d0ea1ced015503c1d3ce59786cf6fcb9",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/3d/metadata.json": {
+    "mtime": 1786090439.3030725,
+    "ast_hash": "064e579ec4c1dd0150a35551fbf68f74",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/3d/visualizations/live.json": {
+    "mtime": 1786090438.3462925,
+    "ast_hash": "952422094edd8267721c63bce1558b7b",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/2d/metadata.json": {
+    "mtime": 1786090410.9551537,
+    "ast_hash": "c0ddef600d16cb19daa6864b64b97052",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/2d/visualizations/live.json": {
+    "mtime": 1786090410.2999809,
+    "ast_hash": "83ea23eeb5e5b4d7f8d9a945c5612301",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/3d/metadata.json": {
+    "mtime": 1786090411.8732965,
+    "ast_hash": "9b809960838ef178436335c98422b6b4",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/3d/visualizations/live.json": {
+    "mtime": 1786090411.0271575,
+    "ast_hash": "c65d16dce8c5cffdbecffd11d800ab13",
+    "semantic_hash": ""
+  },
+  "morphovoxel/lab.py": {
+    "mtime": 1786310849.7010684,
+    "ast_hash": "aae4f45e6e114bcda3871a06432eb94f",
+    "semantic_hash": ""
+  },
+  "tests/test_lab.py": {
+    "mtime": 1786311181.3041985,
+    "ast_hash": "0d488b42a3b81cc2ce4576abdcba84cd",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/2d/config.yaml": {
+    "mtime": 1786090436.9864423,
+    "ast_hash": "dc0678009aa13e7044c585d24dd874cd",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/3d/config.yaml": {
+    "mtime": 1786090438.2837777,
+    "ast_hash": "68b391f891ccee578649415d448472a5",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_dashboard_serves_configs_0/configs/smoke_2d.yaml": {
+    "mtime": 1786090439.440124,
+    "ast_hash": "ca5b55da14c1d6eb410a41da90e02c40",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/2d/config.yaml": {
+    "mtime": 1786090409.6863499,
+    "ast_hash": "e41c741066a7f3785840d9d237506215",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/3d/config.yaml": {
+    "mtime": 1786090410.9811535,
+    "ast_hash": "fdb8ad0c76f889de72bebca464436a06",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_dashboard_serves_configs_0/configs/smoke_2d.yaml": {
+    "mtime": 1786090412.0084755,
+    "ast_hash": "ca5b55da14c1d6eb410a41da90e02c40",
+    "semantic_hash": ""
+  },
+  ".tmp-ui-race-20260807/test_dashboard_serves_configs_0/configs/smoke_2d.yaml": {
+    "mtime": 1786090378.3504045,
+    "ast_hash": "ca5b55da14c1d6eb410a41da90e02c40",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260807_072754_please_show_how_many_steps_are_occuring_per_second.md": {
+    "mtime": 1786087674.672922,
+    "ast_hash": "bdb5da9538b5612adb03f189bd26a078",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260807_074332_is__it_possible_to_interact_with_each_of__the_comp.md": {
+    "mtime": 1786088612.7189782,
+    "ast_hash": "fda255cd5ad7443f65de1118b8e2f77e",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260807_080845_review_the_smallest_robust_interactive_checkpoint.md": {
+    "mtime": 1786090125.46234,
+    "ast_hash": "c98dbe3db463a22917fd754fd0bd05c0",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/2d/visualizations/growth.gif": {
+    "mtime": 1786090437.613086,
+    "ast_hash": "bd078958e8787987b5ced4e8896968ec",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/2d/visualizations/hidden_channels.png": {
+    "mtime": 1786090438.0316842,
+    "ast_hash": "6155975e03407af97c8bb400d98baf25",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/2d/visualizations/live.png": {
+    "mtime": 1786090437.5660899,
+    "ast_hash": "c820604cbd50ff3ba1dcf18166c43c3c",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/2d/visualizations/metrics.png": {
+    "mtime": 1786090438.241727,
+    "ast_hash": "bf9d29f3833469e0cc7f320430b53929",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/2d/visualizations/target_vs_prediction.png": {
+    "mtime": 1786090437.861646,
+    "ast_hash": "786ccf5c9a57d7e5d2d0601af6c9f167",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/3d/visualizations/growth.gif": {
+    "mtime": 1786090438.351294,
+    "ast_hash": "60ec0a296c3ecefb793d9b7565b85b61",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/3d/visualizations/hidden_channels.png": {
+    "mtime": 1786090438.7020214,
+    "ast_hash": "281ee567464a92514c7a2f7e6d5715b6",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/3d/visualizations/isometric.png": {
+    "mtime": 1786090438.8587646,
+    "ast_hash": "f9ae4187424e7a168913aef39f16ad21",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/3d/visualizations/live.png": {
+    "mtime": 1786090438.3452945,
+    "ast_hash": "2ab45d5373e8fcf855cce562cb8e90d3",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/3d/visualizations/metrics.png": {
+    "mtime": 1786090439.289068,
+    "ast_hash": "057a64258ebb910c2e64911df8217639",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/3d/visualizations/target_vs_prediction.png": {
+    "mtime": 1786090438.5444944,
+    "ast_hash": "f67ed1d63b967eca8d9fec0d145d6812",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_cpu_smoke_training_2d_and0/3d/visualizations/views.png": {
+    "mtime": 1786090439.0863202,
+    "ast_hash": "78cf001e3e24b6ce0377e8b600ac1d52",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final2/test_live_preview_drops_locked0/live.png": {
+    "mtime": 1786090439.3310783,
+    "ast_hash": "8b764dc6c2d7ac0f93ddb87894277dca",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/2d/visualizations/growth.gif": {
+    "mtime": 1786090410.348503,
+    "ast_hash": "bd078958e8787987b5ced4e8896968ec",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/2d/visualizations/hidden_channels.png": {
+    "mtime": 1786090410.7539592,
+    "ast_hash": "6155975e03407af97c8bb400d98baf25",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/2d/visualizations/live.png": {
+    "mtime": 1786090410.2969847,
+    "ast_hash": "c820604cbd50ff3ba1dcf18166c43c3c",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/2d/visualizations/metrics.png": {
+    "mtime": 1786090410.9431489,
+    "ast_hash": "bf9d29f3833469e0cc7f320430b53929",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/2d/visualizations/target_vs_prediction.png": {
+    "mtime": 1786090410.5919278,
+    "ast_hash": "786ccf5c9a57d7e5d2d0601af6c9f167",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/3d/visualizations/growth.gif": {
+    "mtime": 1786090411.031533,
+    "ast_hash": "60ec0a296c3ecefb793d9b7565b85b61",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/3d/visualizations/hidden_channels.png": {
+    "mtime": 1786090411.3390925,
+    "ast_hash": "281ee567464a92514c7a2f7e6d5715b6",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/3d/visualizations/isometric.png": {
+    "mtime": 1786090411.472124,
+    "ast_hash": "f9ae4187424e7a168913aef39f16ad21",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/3d/visualizations/live.png": {
+    "mtime": 1786090411.0271575,
+    "ast_hash": "2ab45d5373e8fcf855cce562cb8e90d3",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/3d/visualizations/metrics.png": {
+    "mtime": 1786090411.861296,
+    "ast_hash": "057a64258ebb910c2e64911df8217639",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/3d/visualizations/target_vs_prediction.png": {
+    "mtime": 1786090411.1980453,
+    "ast_hash": "f67ed1d63b967eca8d9fec0d145d6812",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_cpu_smoke_training_2d_and0/3d/visualizations/views.png": {
+    "mtime": 1786090411.6760364,
+    "ast_hash": "78cf001e3e24b6ce0377e8b600ac1d52",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-final/test_live_preview_drops_locked0/live.png": {
+    "mtime": 1786090411.8982956,
+    "ast_hash": "8b764dc6c2d7ac0f93ddb87894277dca",
+    "semantic_hash": ""
+  },
+  ".tmp-ui-race-20260807/test_live_preview_drops_locked0/live.png": {
+    "mtime": 1786090378.2406626,
+    "ast_hash": "8b764dc6c2d7ac0f93ddb87894277dca",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/2d/metadata.json": {
+    "mtime": 1786091974.595981,
+    "ast_hash": "6fe992546f690f71498b2ee81efd10a5",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/2d/visualizations/live.json": {
+    "mtime": 1786091973.7205944,
+    "ast_hash": "d0c340349854c1ce90cd14d1f7621c4a",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/3d/metadata.json": {
+    "mtime": 1786091975.5764825,
+    "ast_hash": "d764ed23a50bce1091a5898ecfd2112d",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/3d/visualizations/live.json": {
+    "mtime": 1786091974.666494,
+    "ast_hash": "b82f36cb5e28d34579c0d601509d53f6",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/2d/config.yaml": {
+    "mtime": 1786091972.8278923,
+    "ast_hash": "a3dd02a4fd42d9514108912d16436da8",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/3d/config.yaml": {
+    "mtime": 1786091974.620495,
+    "ast_hash": "973bd30fbcabf4d5c70c04bb1c6ab7ff",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_dashboard_serves_configs_0/configs/smoke_2d.yaml": {
+    "mtime": 1786091975.723127,
+    "ast_hash": "ca5b55da14c1d6eb410a41da90e02c40",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-focused/test_dashboard_serves_configs_0/configs/smoke_2d.yaml": {
+    "mtime": 1786092092.783666,
+    "ast_hash": "ca5b55da14c1d6eb410a41da90e02c40",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260807_081621_pleaes_make_it.md": {
+    "mtime": 1786090581.358055,
+    "ast_hash": "b5e92267b4d982ea694c41642dec5410",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260807_083849_inspect_existing_tests_and_add_the_smallest_regres.md": {
+    "mtime": 1786091929.6364048,
+    "ast_hash": "e5e35f1aa0d4c62fd7440c5d1660a7a4",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260807_084024_review_the_invalid_request_token_bug_and_recommend.md": {
+    "mtime": 1786092024.6166797,
+    "ast_hash": "00f28cbafdc904608141380bed0481ba",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/2d/visualizations/growth.gif": {
+    "mtime": 1786091973.8111043,
+    "ast_hash": "bd078958e8787987b5ced4e8896968ec",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/2d/visualizations/hidden_channels.png": {
+    "mtime": 1786091974.3718877,
+    "ast_hash": "6155975e03407af97c8bb400d98baf25",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/2d/visualizations/live.png": {
+    "mtime": 1786091973.719596,
+    "ast_hash": "c820604cbd50ff3ba1dcf18166c43c3c",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/2d/visualizations/metrics.png": {
+    "mtime": 1786091974.5849786,
+    "ast_hash": "bf9d29f3833469e0cc7f320430b53929",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/2d/visualizations/target_vs_prediction.png": {
+    "mtime": 1786091974.1810853,
+    "ast_hash": "786ccf5c9a57d7e5d2d0601af6c9f167",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/3d/visualizations/growth.gif": {
+    "mtime": 1786091974.6704931,
+    "ast_hash": "60ec0a296c3ecefb793d9b7565b85b61",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/3d/visualizations/hidden_channels.png": {
+    "mtime": 1786091974.9998767,
+    "ast_hash": "281ee567464a92514c7a2f7e6d5715b6",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/3d/visualizations/isometric.png": {
+    "mtime": 1786091975.1473958,
+    "ast_hash": "f9ae4187424e7a168913aef39f16ad21",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/3d/visualizations/live.png": {
+    "mtime": 1786091974.666494,
+    "ast_hash": "2ab45d5373e8fcf855cce562cb8e90d3",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/3d/visualizations/metrics.png": {
+    "mtime": 1786091975.56548,
+    "ast_hash": "057a64258ebb910c2e64911df8217639",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/3d/visualizations/target_vs_prediction.png": {
+    "mtime": 1786091974.8535173,
+    "ast_hash": "f67ed1d63b967eca8d9fec0d145d6812",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_cpu_smoke_training_2d_and0/3d/visualizations/views.png": {
+    "mtime": 1786091975.3624353,
+    "ast_hash": "78cf001e3e24b6ce0377e8b600ac1d52",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-fix/test_live_preview_drops_locked0/live.png": {
+    "mtime": 1786091975.601006,
+    "ast_hash": "8b764dc6c2d7ac0f93ddb87894277dca",
+    "semantic_hash": ""
+  },
+  ".tmp-pytest-token-focused/test_live_preview_drops_locked0/live.png": {
+    "mtime": 1786092092.6738825,
+    "ast_hash": "8b764dc6c2d7ac0f93ddb87894277dca",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/2d/metadata.json": {
+    "mtime": 1786311441.4668245,
+    "ast_hash": "1685e8665cd29fe62d8c1bd666e5d812",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/2d/visualizations/live.json": {
+    "mtime": 1786311440.2649856,
+    "ast_hash": "9b0d11bfc9951d7cd8f6fe623ee8a0e0",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/3d/metadata.json": {
+    "mtime": 1786311442.7630236,
+    "ast_hash": "aa66ad77f2dcea48f9172d1fdbe67b85",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/3d/visualizations/live.json": {
+    "mtime": 1786311441.591127,
+    "ast_hash": "0d578e1918c1644e1c7b787fba4c50af",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/2d/config.yaml": {
+    "mtime": 1786311438.9203944,
+    "ast_hash": "4a839c68d92455f8a3b5ca614241708e",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/3d/config.yaml": {
+    "mtime": 1786311441.511119,
+    "ast_hash": "f5071c5c4bc0b9dbba2288cfb2f86699",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_dashboard_serves_configs_0/configs/smoke_2d.yaml": {
+    "mtime": 1786311442.923672,
+    "ast_hash": "ca5b55da14c1d6eb410a41da90e02c40",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-tests/test_dashboard_serves_configs_0/configs/smoke_2d.yaml": {
+    "mtime": 1786311198.7497263,
+    "ast_hash": "ca5b55da14c1d6eb410a41da90e02c40",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260807_084159_its_erroring_and_saying__invalid_request_token__it.md": {
+    "mtime": 1786092119.8660989,
+    "ast_hash": "523e199bfb2e1ffd4080617ad592ca88",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260809_211951_how_do_i_run_this.md": {
+    "mtime": 1786310391.1137764,
+    "ast_hash": "b177880f5538967dbd6b49f9263b7120",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/2d/visualizations/growth.gif": {
+    "mtime": 1786311440.451017,
+    "ast_hash": "bd078958e8787987b5ced4e8896968ec",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/2d/visualizations/hidden_channels.png": {
+    "mtime": 1786311441.1722755,
+    "ast_hash": "6155975e03407af97c8bb400d98baf25",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/2d/visualizations/live.png": {
+    "mtime": 1786311440.2639852,
+    "ast_hash": "c820604cbd50ff3ba1dcf18166c43c3c",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/2d/visualizations/metrics.png": {
+    "mtime": 1786311441.448823,
+    "ast_hash": "bf9d29f3833469e0cc7f320430b53929",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/2d/visualizations/target_vs_prediction.png": {
+    "mtime": 1786311440.969958,
+    "ast_hash": "786ccf5c9a57d7e5d2d0601af6c9f167",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/3d/visualizations/growth.gif": {
+    "mtime": 1786311441.5972397,
+    "ast_hash": "60ec0a296c3ecefb793d9b7565b85b61",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/3d/visualizations/hidden_channels.png": {
+    "mtime": 1786311442.0210268,
+    "ast_hash": "281ee567464a92514c7a2f7e6d5715b6",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/3d/visualizations/isometric.png": {
+    "mtime": 1786311442.2185798,
+    "ast_hash": "f9ae4187424e7a168913aef39f16ad21",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/3d/visualizations/live.png": {
+    "mtime": 1786311441.590127,
+    "ast_hash": "2ab45d5373e8fcf855cce562cb8e90d3",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/3d/visualizations/metrics.png": {
+    "mtime": 1786311442.750024,
+    "ast_hash": "057a64258ebb910c2e64911df8217639",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/3d/visualizations/target_vs_prediction.png": {
+    "mtime": 1786311441.8454943,
+    "ast_hash": "f67ed1d63b967eca8d9fec0d145d6812",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_cpu_smoke_training_2d_and0/3d/visualizations/views.png": {
+    "mtime": 1786311442.5087662,
+    "ast_hash": "78cf001e3e24b6ce0377e8b600ac1d52",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-full/test_live_preview_drops_locked0/live.png": {
+    "mtime": 1786311442.7975535,
+    "ast_hash": "8b764dc6c2d7ac0f93ddb87894277dca",
+    "semantic_hash": ""
+  },
+  ".tmp-voxel-tests/test_live_preview_drops_locked0/live.png": {
+    "mtime": 1786311198.635513,
+    "ast_hash": "8b764dc6c2d7ac0f93ddb87894277dca",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/2d/metadata.json": {
+    "mtime": 1786312035.2699726,
+    "ast_hash": "4b70c921b204aa39339fd49d5c125862",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/2d/visualizations/live.json": {
+    "mtime": 1786312034.499253,
+    "ast_hash": "2483d4af67b67bf83aa7f8de539d70d7",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/3d/metadata.json": {
+    "mtime": 1786312036.2971456,
+    "ast_hash": "3e2981131ee9e47fa9513ca23dc6f427",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/2d/metadata.json": {
+    "mtime": 1786311915.9895291,
+    "ast_hash": "d00f827781eaacb762d3716438e09a9b",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/2d/visualizations/live.json": {
+    "mtime": 1786311914.7952936,
+    "ast_hash": "6cd65332f809f2dea6760709ba50e2ff",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/3d/metadata.json": {
+    "mtime": 1786311917.2090168,
+    "ast_hash": "fde6f4fbe0d5feb01b1f0c7d03c01680",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/2d/config.yaml": {
+    "mtime": 1786312033.9050145,
+    "ast_hash": "ed2481029e614edcc7f3bd2f0cf0414a",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/3d/config.yaml": {
+    "mtime": 1786312035.2949739,
+    "ast_hash": "66a0a9ab762c6898bb4a74e64dc14e6d",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_dashboard_serves_configs_0/configs/smoke_2d.yaml": {
+    "mtime": 1786312036.448296,
+    "ast_hash": "ca5b55da14c1d6eb410a41da90e02c40",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/2d/config.yaml": {
+    "mtime": 1786311913.7672873,
+    "ast_hash": "2fd7c1e24d12bea90c00cdb470b1df65",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/3d/config.yaml": {
+    "mtime": 1786311916.141052,
+    "ast_hash": "e89c722def32dbb4d3f0fc240172df82",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_dashboard_serves_configs_0/configs/smoke_2d.yaml": {
+    "mtime": 1786311917.3318806,
+    "ast_hash": "ca5b55da14c1d6eb410a41da90e02c40",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260809_213752_make_an_option_to_display_the_3d_voxel_runs_in_the.md": {
+    "mtime": 1786311472.7235532,
+    "ast_hash": "5b91ecbf8771458ef3d2e7024d97728f",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/2d/visualizations/growth.gif": {
+    "mtime": 1786312034.5732925,
+    "ast_hash": "a5391a37fd28f628436317af96a5c8d1",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/2d/visualizations/hidden_channels.png": {
+    "mtime": 1786312035.023822,
+    "ast_hash": "c0a8b092ff06ce330ca9ad6b1a26f870",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/2d/visualizations/live.png": {
+    "mtime": 1786312034.4982486,
+    "ast_hash": "d38af41c5eb3831e36a5030f1fec11be",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/2d/visualizations/metrics.png": {
+    "mtime": 1786312035.254971,
+    "ast_hash": "57aa39d6721e58887ad97f76264b98ba",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/2d/visualizations/target_vs_prediction.png": {
+    "mtime": 1786312034.8528347,
+    "ast_hash": "e0aff8a186829a979a1cdbf2a0d56ce7",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/3d/visualizations/growth.gif": {
+    "mtime": 1786312035.341979,
+    "ast_hash": "60ec0a296c3ecefb793d9b7565b85b61",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/3d/visualizations/hidden_channels.png": {
+    "mtime": 1786312035.7061753,
+    "ast_hash": "281ee567464a92514c7a2f7e6d5715b6",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/3d/visualizations/isometric.png": {
+    "mtime": 1786312035.8592124,
+    "ast_hash": "f9ae4187424e7a168913aef39f16ad21",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/3d/visualizations/metrics.png": {
+    "mtime": 1786312036.2821448,
+    "ast_hash": "057a64258ebb910c2e64911df8217639",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/3d/visualizations/target_vs_prediction.png": {
+    "mtime": 1786312035.5465465,
+    "ast_hash": "f67ed1d63b967eca8d9fec0d145d6812",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_cpu_smoke_training_2d_and0/3d/visualizations/views.png": {
+    "mtime": 1786312036.0863066,
+    "ast_hash": "78cf001e3e24b6ce0377e8b600ac1d52",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-full/test_live_preview_drops_locked0/live.png": {
+    "mtime": 1786312036.338149,
+    "ast_hash": "8b764dc6c2d7ac0f93ddb87894277dca",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/2d/visualizations/growth.gif": {
+    "mtime": 1786311914.9613447,
+    "ast_hash": "a5391a37fd28f628436317af96a5c8d1",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/2d/visualizations/hidden_channels.png": {
+    "mtime": 1786311915.587731,
+    "ast_hash": "c0a8b092ff06ce330ca9ad6b1a26f870",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/2d/visualizations/live.png": {
+    "mtime": 1786311914.7932916,
+    "ast_hash": "d38af41c5eb3831e36a5030f1fec11be",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/2d/visualizations/metrics.png": {
+    "mtime": 1786311915.963003,
+    "ast_hash": "57aa39d6721e58887ad97f76264b98ba",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/2d/visualizations/target_vs_prediction.png": {
+    "mtime": 1786311915.3876026,
+    "ast_hash": "e0aff8a186829a979a1cdbf2a0d56ce7",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/3d/visualizations/growth.gif": {
+    "mtime": 1786311916.2221394,
+    "ast_hash": "60ec0a296c3ecefb793d9b7565b85b61",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/3d/visualizations/hidden_channels.png": {
+    "mtime": 1786311916.5857022,
+    "ast_hash": "281ee567464a92514c7a2f7e6d5715b6",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/3d/visualizations/isometric.png": {
+    "mtime": 1786311916.7542176,
+    "ast_hash": "f9ae4187424e7a168913aef39f16ad21",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/3d/visualizations/metrics.png": {
+    "mtime": 1786311917.1940138,
+    "ast_hash": "057a64258ebb910c2e64911df8217639",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/3d/visualizations/target_vs_prediction.png": {
+    "mtime": 1786311916.4301426,
+    "ast_hash": "f67ed1d63b967eca8d9fec0d145d6812",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_cpu_smoke_training_2d_and0/3d/visualizations/views.png": {
+    "mtime": 1786311916.9849706,
+    "ast_hash": "78cf001e3e24b6ce0377e8b600ac1d52",
+    "semantic_hash": ""
+  },
+  ".tmp-preview-tests/test_live_preview_drops_locked0/live.png": {
+    "mtime": 1786311917.223016,
+    "ast_hash": "8b764dc6c2d7ac0f93ddb87894277dca",
+    "semantic_hash": ""
+  },
+  ".tmp-checkpoint-name/test_dashboard_serves_configs_0/configs/smoke_2d.yaml": {
+    "mtime": 1786312274.5598667,
+    "ast_hash": "ca5b55da14c1d6eb410a41da90e02c40",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260809_214817_additionally__change_the_during_training_view_wind.md": {
+    "mtime": 1786312097.349368,
+    "ast_hash": "722669dea25f74d6508fe937fd7ba0aa",
+    "semantic_hash": ""
+  },
+  ".tmp-checkpoint-name/test_live_preview_drops_locked0/live.png": {
+    "mtime": 1786312274.4501967,
+    "ast_hash": "8b764dc6c2d7ac0f93ddb87894277dca",
+    "semantic_hash": ""
+  }
+}

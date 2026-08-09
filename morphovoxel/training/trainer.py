@@ -66,7 +66,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     iterations = int(config.get("iterations", 10))
     minimum, maximum = config.get("rollout_steps", [16, 32] if dimensions == 2 else [8, 16])
     default_capture_every = max(1, int(maximum) // 12)
-    frame_every = max(1, int(config.get("frame_every", default_capture_every)))
+    capture_every = max(1, int(config.get("frame_every", default_capture_every)))
     live_preview = bool(config.get("live_preview", False))
     preview_image = None
     if live_preview:
@@ -105,19 +105,14 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             state = seed_state(batch, size, layout, dimensions=dimensions, seed_size=int(config.get("seed_size", 1)), noise=float(config.get("seed_noise", 0)), random_seed=seed + step, device=device)
         target, material = _targets(dimensions, labels, size, seed, conditional, device, config.get("target_kind"))
         steps = random.randint(int(minimum), int(maximum))
-        on_step = None
-        if preview_image:
-            rollout_started = time.perf_counter()
-
-            def on_step(update, current, *, iteration=step + 1, total=steps):
-                if update % frame_every == 0 or update == total:
-                    image = preview_image(current[:1])
-                    write_live_preview(
-                        run / "visualizations" / "live.png", image,
-                        phase="training", iteration=iteration, step=update, total_steps=total,
-                        steps_per_second=steps_per_second(update, rollout_started),
-                    )
-        final_state, _ = rollout(model, state, steps, genomes, on_step=on_step)
+        preview_started = time.perf_counter() if preview_image and (step + 1) % 10 == 0 else None
+        final_state, _ = rollout(model, state, steps, genomes)
+        if preview_started is not None:
+            write_live_preview(
+                run / "visualizations" / "live.png", preview_image(final_state[:1]),
+                phase="training", iteration=step + 1, step=steps, total_steps=steps,
+                steps_per_second=steps_per_second(steps, preview_started),
+            )
         loss, components = morphology_loss(final_state, target, material, layout, config.get("loss_weights"))
         stability_steps = int(config.get("stability_steps", 0))
         if stability_steps:
@@ -152,20 +147,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     pd.DataFrame([summary]).to_csv(run / "metrics" / "summary.csv", index=False)
     capture = seed_state(1, size, layout, dimensions=dimensions, device=device)
     capture_genome = one_hot_genomes(torch.zeros(1, dtype=torch.long, device=device)) if conditional else None
-    final_on_step = None
-    if preview_image:
-        final_started = time.perf_counter()
-
-        def final_on_step(update, current):
-            if update % frame_every == 0 or update == int(maximum):
-                image = preview_image(current[:1])
-                write_live_preview(
-                    run / "visualizations" / "live.png", image,
-                    phase="final rollout", iteration=start + iterations, step=update, total_steps=int(maximum),
-                    steps_per_second=steps_per_second(update, final_started),
-                )
     with torch.no_grad():
-        _, frames = rollout(model, capture, int(maximum), capture_genome, frame_every, final_on_step)
+        _, frames = rollout(model, capture, int(maximum), capture_genome, capture_every)
     np.savez_compressed(run / "rollouts" / "states.npz", states=np.stack([frame.numpy() for frame in frames]))
     if dimensions == 2:
         from ..rendering_2d import save_comparison, save_gif, save_hidden_channels

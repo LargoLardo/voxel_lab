@@ -47,10 +47,8 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
 
     server = create_server(tmp_path, port=0)
     payload = {"config": "smoke_2d.yaml", "content": "dimensions: 2\n", "device": "cpu", "live_preview": True}
-    with pytest.raises(ValueError, match="integer"):
-        _launch(server, {**payload, "run_name": "new", "frame_every": 1.5})
     with pytest.raises(ValueError, match="already exists"):
-        _launch(server, {**payload, "run_name": "demo", "frame_every": 1})
+        _launch(server, {**payload, "run_name": "demo"})
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -58,12 +56,16 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         payload = json.load(urlopen(f"http://127.0.0.1:{server.server_port}/api/state", timeout=5))
         assert "Experiment control room" in root
         assert "Quick settings" in root
-        assert "Design lab" in root
+        assert "View Checkpoints" in root
+        assert "Design lab" not in root
+        assert root.index('<option value="voxels">3D voxels</option>') < root.index('<option value="slice">Z slice</option>')
+        assert "meta.dimensions===3?'voxels':'slice'" in root
         assert "Double-click to place a seed" in root
         assert "3D voxels" in root
         assert "Drag to rotate" in root
         assert "r.status===403&&data.token&&options.body" in root
-        assert 'id="frameEvery" type="range"' in root
+        assert "End state every 10 iterations" in root
+        assert 'id="frameEvery"' not in root
         assert "steps/s" in root
         assert payload["runs"][0]["name"] == "demo"
         assert payload["hardware"]["auto_device"] in {"cpu", "cuda"}

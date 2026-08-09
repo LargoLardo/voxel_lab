@@ -1,0 +1,590 @@
+{
+  "generated_at": "2026-08-09T22:00:36.533635+00:00",
+  "nodes": {
+    "morphovoxel_checkpointing": {
+      "code_fingerprint": "854d8bd615f70a46383c34db99f755a685e718f9b4140ca392b8348c1a639363",
+      "label": "checkpointing.py",
+      "last": "2026-08-07T08:08:45.462160+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T08:08:45.462160+00:00",
+          "outcome": "useful",
+          "q": "Review the smallest robust interactive checkpoint-backed Design Lab implementation"
+        }
+      ],
+      "score": 0.942181898,
+      "source_file": "morphovoxel/checkpointing.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "morphovoxel_checkpointing_load_checkpoint": {
+      "code_fingerprint": "854d8bd615f70a46383c34db99f755a685e718f9b4140ca392b8348c1a639363",
+      "label": "load_checkpoint()",
+      "last": "2026-08-07T07:43:32.718576+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T07:43:32.718576+00:00",
+          "outcome": "useful",
+          "q": "is  it possible to interact with each of  the completed runs in a design lab, such as placing a seed down with double click and then watching how the run's result would grow it accordingly and erasing parts using the mouse to see growth/regeneration. something similar to [https://distill.pub/2020/growing-ca/](https://distill.pub/2020/growing-ca/)"
+        }
+      ],
+      "score": 0.94180083,
+      "source_file": "morphovoxel/checkpointing.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "morphovoxel_damage_operators_2d_damage_2d": {
+      "code_fingerprint": "83d058dd3e73ee039cbd67079f47d81fec6bd4fc24d23fdce0dff077ac41c9ea",
+      "label": "damage_2d()",
+      "last": "2026-08-07T07:43:32.718576+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T07:43:32.718576+00:00",
+          "outcome": "useful",
+          "q": "is  it possible to interact with each of  the completed runs in a design lab, such as placing a seed down with double click and then watching how the run's result would grow it accordingly and erasing parts using the mouse to see growth/regeneration. something similar to [https://distill.pub/2020/growing-ca/](https://distill.pub/2020/growing-ca/)"
+        }
+      ],
+      "score": 0.94180083,
+      "source_file": "morphovoxel/damage/operators_2d.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "morphovoxel_damage_operators_3d_damage_3d": {
+      "code_fingerprint": "3420f8f3ebd20aeda7a6cb3b5a3d87b7331cdadad8827b2993bee82a85f21126",
+      "label": "damage_3d()",
+      "last": "2026-08-07T07:43:32.718576+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T07:43:32.718576+00:00",
+          "outcome": "useful",
+          "q": "is  it possible to interact with each of  the completed runs in a design lab, such as placing a seed down with double click and then watching how the run's result would grow it accordingly and erasing parts using the mouse to see growth/regeneration. something similar to [https://distill.pub/2020/growing-ca/](https://distill.pub/2020/growing-ca/)"
+        }
+      ],
+      "score": 0.94180083,
+      "source_file": "morphovoxel/damage/operators_3d.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "morphovoxel_evaluate_regeneration": {
+      "code_fingerprint": "7fe4b9e43bf66b287d8344e1085f0e24e1b8e77ecc693d6f6348006b7dfc2cb1",
+      "label": "evaluate_regeneration.py",
+      "last": "2026-08-07T07:27:54.672726+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T07:27:54.672726+00:00",
+          "outcome": "useful",
+          "q": "please show how many steps are occuring per second, as well as an easier ui with sliders to adjust configs hi"
+        }
+      ],
+      "score": 0.941564608,
+      "source_file": "morphovoxel/evaluate_regeneration.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "morphovoxel_lab_labsession": {
+      "code_fingerprint": "7e47f4f3a65362213b4593b302fb37a10141c337267eb65b492bb5aaf141a1d3",
+      "label": "LabSession",
+      "last": "2026-08-09T21:37:52.722829+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-09T21:37:52.722829+00:00",
+          "outcome": "useful",
+          "q": "make an option to display the 3d voxel runs in the design lab as an actual 3d depiction with 3d cubes/voxel representations instead of 2d perspectives."
+        },
+        {
+          "date": "2026-08-07T08:16:21.357487+00:00",
+          "outcome": "useful",
+          "q": "pleaes make it"
+        },
+        {
+          "date": "2026-08-07T08:08:45.462160+00:00",
+          "outcome": "useful",
+          "q": "Review the smallest robust interactive checkpoint-backed Design Lab implementation"
+        }
+      ],
+      "score": 2.884114027,
+      "source_file": "morphovoxel/lab.py",
+      "status": "preferred",
+      "uses": 3
+    },
+    "morphovoxel_model_2d_neuralca2d": {
+      "code_fingerprint": "0d79e1eb6eec3cd725eb31452a0cfa2d001866097767f8195cb673565929f797",
+      "label": "NeuralCA2D",
+      "last": "2026-08-07T08:16:21.357487+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T08:16:21.357487+00:00",
+          "outcome": "useful",
+          "q": "pleaes make it"
+        },
+        {
+          "date": "2026-08-07T08:08:45.462160+00:00",
+          "outcome": "useful",
+          "q": "Review the smallest robust interactive checkpoint-backed Design Lab implementation"
+        }
+      ],
+      "score": 1.884478668,
+      "source_file": "morphovoxel/model_2d.py",
+      "status": "preferred",
+      "uses": 2
+    },
+    "morphovoxel_model_3d_neuralca3d": {
+      "code_fingerprint": "f988bc9d69d740ac99ada434d017de23a8058ba20817482cfd16c0a54f4ad958",
+      "label": "NeuralCA3D",
+      "last": "2026-08-07T08:16:21.357487+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T08:16:21.357487+00:00",
+          "outcome": "useful",
+          "q": "pleaes make it"
+        },
+        {
+          "date": "2026-08-07T08:08:45.462160+00:00",
+          "outcome": "useful",
+          "q": "Review the smallest robust interactive checkpoint-backed Design Lab implementation"
+        }
+      ],
+      "score": 1.884478668,
+      "source_file": "morphovoxel/model_3d.py",
+      "status": "preferred",
+      "uses": 2
+    },
+    "morphovoxel_random_utils_resolve_device": {
+      "code_fingerprint": "3b1f93c2729937633e76d578fccfe2ae572c42c707068c576e64d1bbccc1c689",
+      "label": "resolve_device()",
+      "last": "2026-08-07T06:54:30.469654+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T06:54:30.469654+00:00",
+          "outcome": "useful",
+          "q": "How does the dashboard select CPU or CUDA and display live cellular automaton frames?"
+        }
+      ],
+      "score": 0.941060103,
+      "source_file": "morphovoxel/random_utils.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "morphovoxel_rollout_rollout": {
+      "code_fingerprint": "903fd710c69161615baf68eb85f4801327dd4db51a2f951eb8bedf5a6330be19",
+      "label": "rollout()",
+      "last": "2026-08-07T07:43:32.718576+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T07:43:32.718576+00:00",
+          "outcome": "useful",
+          "q": "is  it possible to interact with each of  the completed runs in a design lab, such as placing a seed down with double click and then watching how the run's result would grow it accordingly and erasing parts using the mouse to see growth/regeneration. something similar to [https://distill.pub/2020/growing-ca/](https://distill.pub/2020/growing-ca/)"
+        },
+        {
+          "date": "2026-08-07T07:27:54.672726+00:00",
+          "outcome": "useful",
+          "q": "please show how many steps are occuring per second, as well as an easier ui with sliders to adjust configs hi"
+        },
+        {
+          "date": "2026-08-07T06:54:30.469654+00:00",
+          "outcome": "useful",
+          "q": "How does the dashboard select CPU or CUDA and display live cellular automaton frames?"
+        }
+      ],
+      "score": 2.82442554,
+      "source_file": "morphovoxel/rollout.py",
+      "status": "preferred",
+      "uses": 3
+    },
+    "morphovoxel_run_ecology": {
+      "code_fingerprint": "6e30b8cb533d8e59f2ddb523a803bfa802079a8c4bb4dc8d69adc723433e0004",
+      "label": "run_ecology.py",
+      "last": "2026-08-07T07:27:54.672726+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T07:27:54.672726+00:00",
+          "outcome": "useful",
+          "q": "please show how many steps are occuring per second, as well as an easier ui with sliders to adjust configs hi"
+        },
+        {
+          "date": "2026-08-07T06:21:22.035803+00:00",
+          "outcome": "useful",
+          "q": "please produce a ui that i can use to navigate through all of these"
+        },
+        {
+          "date": "2026-08-07T06:05:10.604669+00:00",
+          "outcome": "useful",
+          "q": "how can i run see and interact with the environments"
+        }
+      ],
+      "score": 2.822439971,
+      "source_file": "morphovoxel/run_ecology.py",
+      "status": "preferred",
+      "uses": 3
+    },
+    "morphovoxel_seeding_seed_state": {
+      "code_fingerprint": "415bb6578cb58e59ef839fe6cb4589ce84de977edf294c4ecdea44631a6a0e67",
+      "label": "seed_state()",
+      "last": "2026-08-07T08:08:45.462160+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T08:08:45.462160+00:00",
+          "outcome": "useful",
+          "q": "Review the smallest robust interactive checkpoint-backed Design Lab implementation"
+        },
+        {
+          "date": "2026-08-07T07:43:32.718576+00:00",
+          "outcome": "useful",
+          "q": "is  it possible to interact with each of  the completed runs in a design lab, such as placing a seed down with double click and then watching how the run's result would grow it accordingly and erasing parts using the mouse to see growth/regeneration. something similar to [https://distill.pub/2020/growing-ca/](https://distill.pub/2020/growing-ca/)"
+        }
+      ],
+      "score": 1.883982727,
+      "source_file": "morphovoxel/seeding.py",
+      "status": "preferred",
+      "uses": 2
+    },
+    "morphovoxel_state_statelayout": {
+      "code_fingerprint": "28ca86816ef68c9f9417848aa319182e297de17b67d29858d1821c14a1d21ef9",
+      "label": "StateLayout",
+      "last": "2026-08-09T21:37:52.722829+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-09T21:37:52.722829+00:00",
+          "outcome": "useful",
+          "q": "make an option to display the 3d voxel runs in the design lab as an actual 3d depiction with 3d cubes/voxel representations instead of 2d perspectives."
+        }
+      ],
+      "score": 0.999635359,
+      "source_file": "morphovoxel/state.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "morphovoxel_training_trainer_rationale_42": {
+      "code_fingerprint": "ac6d970e9338c40bf2ea5a2624e761f3648f9704d4dcec15634e1ef88fd5a5cf",
+      "label": "Train an NCA and persist a reproducible, visualizable run.",
+      "last": "2026-08-07T06:21:22.035803+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T06:21:22.035803+00:00",
+          "outcome": "useful",
+          "q": "please produce a ui that i can use to navigate through all of these"
+        },
+        {
+          "date": "2026-08-07T06:05:10.604669+00:00",
+          "outcome": "useful",
+          "q": "how can i run see and interact with the environments"
+        }
+      ],
+      "score": 1.880875362,
+      "source_file": "morphovoxel/training/trainer.py",
+      "status": "preferred",
+      "uses": 2
+    },
+    "morphovoxel_training_trainer_train": {
+      "code_fingerprint": "ac6d970e9338c40bf2ea5a2624e761f3648f9704d4dcec15634e1ef88fd5a5cf",
+      "label": "train()",
+      "last": "2026-08-07T07:27:54.672726+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T07:27:54.672726+00:00",
+          "outcome": "useful",
+          "q": "please show how many steps are occuring per second, as well as an easier ui with sliders to adjust configs hi"
+        },
+        {
+          "date": "2026-08-07T07:14:14.478646+00:00",
+          "outcome": "useful",
+          "q": "PermissionError replacing live.json during training preview"
+        },
+        {
+          "date": "2026-08-07T06:54:30.469654+00:00",
+          "outcome": "useful",
+          "q": "How does the dashboard select CPU or CUDA and display live cellular automaton frames?"
+        }
+      ],
+      "score": 2.823982824,
+      "source_file": "morphovoxel/training/trainer.py",
+      "status": "preferred",
+      "uses": 3
+    },
+    "morphovoxel_ui": {
+      "code_fingerprint": "34d6a2800517295e5cffc7d0426e4043dd8834b3335d9b2a2001e3afd36002dc",
+      "label": "ui.py",
+      "last": "2026-08-07T07:43:32.718576+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T07:43:32.718576+00:00",
+          "outcome": "useful",
+          "q": "is  it possible to interact with each of  the completed runs in a design lab, such as placing a seed down with double click and then watching how the run's result would grow it accordingly and erasing parts using the mouse to see growth/regeneration. something similar to [https://distill.pub/2020/growing-ca/](https://distill.pub/2020/growing-ca/)"
+        }
+      ],
+      "score": 0.94180083,
+      "source_file": "morphovoxel/ui.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "morphovoxel_ui_dashboardhandler": {
+      "code_fingerprint": "34d6a2800517295e5cffc7d0426e4043dd8834b3335d9b2a2001e3afd36002dc",
+      "label": "DashboardHandler",
+      "last": "2026-08-09T21:53:26.489535+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-09T21:53:26.489535+00:00",
+          "outcome": "useful",
+          "q": "change the name of the design lab to \"View Checkpoints\" also, make the 3d voxel viewer the first option instead of z slice"
+        },
+        {
+          "date": "2026-08-09T21:48:17.349133+00:00",
+          "outcome": "useful",
+          "q": "additionally, change the during-training view window so that it only displays the end result of every 10 iterations, so that it is no longer save/view every N steps but instead automatically only views the end result of the steps for every 10 iterations."
+        },
+        {
+          "date": "2026-08-09T21:37:52.722829+00:00",
+          "outcome": "useful",
+          "q": "make an option to display the 3d voxel runs in the design lab as an actual 3d depiction with 3d cubes/voxel representations instead of 2d perspectives."
+        },
+        {
+          "date": "2026-08-09T21:19:51.110674+00:00",
+          "outcome": "useful",
+          "q": "how do i run this"
+        },
+        {
+          "date": "2026-08-07T08:41:59.866045+00:00",
+          "outcome": "useful",
+          "q": "its erroring and saying: invalid request token; it does not let me place a seed nor play anything"
+        }
+      ],
+      "score": 7.768947385,
+      "source_file": "morphovoxel/ui.py",
+      "status": "preferred",
+      "uses": 8
+    },
+    "morphovoxel_ui_dashboardhandler_do_post": {
+      "code_fingerprint": "34d6a2800517295e5cffc7d0426e4043dd8834b3335d9b2a2001e3afd36002dc",
+      "label": ".do_POST()",
+      "last": "2026-08-07T08:40:24.616428+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T08:40:24.616428+00:00",
+          "outcome": "useful",
+          "q": "Review the invalid request token bug and recommend the smallest secure restart-safe POST retry fix."
+        }
+      ],
+      "score": 0.942660523,
+      "source_file": "morphovoxel/ui.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "morphovoxel_ui_dashboardhandler_payload": {
+      "code_fingerprint": "34d6a2800517295e5cffc7d0426e4043dd8834b3335d9b2a2001e3afd36002dc",
+      "label": "._payload()",
+      "last": "2026-08-07T08:40:24.616428+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T08:40:24.616428+00:00",
+          "outcome": "useful",
+          "q": "Review the invalid request token bug and recommend the smallest secure restart-safe POST retry fix."
+        }
+      ],
+      "score": 0.942660523,
+      "source_file": "morphovoxel/ui.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "morphovoxel_ui_dashboardserver": {
+      "code_fingerprint": "34d6a2800517295e5cffc7d0426e4043dd8834b3335d9b2a2001e3afd36002dc",
+      "label": "DashboardServer",
+      "last": "2026-08-09T21:19:51.110674+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-09T21:19:51.110674+00:00",
+          "outcome": "useful",
+          "q": "how do i run this"
+        },
+        {
+          "date": "2026-08-07T08:41:59.866045+00:00",
+          "outcome": "useful",
+          "q": "its erroring and saying: invalid request token; it does not let me place a seed nor play anything"
+        },
+        {
+          "date": "2026-08-07T08:40:24.616428+00:00",
+          "outcome": "useful",
+          "q": "Review the invalid request token bug and recommend the smallest secure restart-safe POST retry fix."
+        },
+        {
+          "date": "2026-08-07T08:38:49.636450+00:00",
+          "outcome": "useful",
+          "q": "Inspect existing tests and add the smallest regression test for stale dashboard tokens after server restart."
+        },
+        {
+          "date": "2026-08-07T08:08:45.462160+00:00",
+          "outcome": "useful",
+          "q": "Review the smallest robust interactive checkpoint-backed Design Lab implementation"
+        }
+      ],
+      "score": 4.7695098,
+      "source_file": "morphovoxel/ui.py",
+      "status": "preferred",
+      "uses": 5
+    },
+    "morphovoxel_ui_invalidrequesttoken": {
+      "code_fingerprint": "34d6a2800517295e5cffc7d0426e4043dd8834b3335d9b2a2001e3afd36002dc",
+      "label": "InvalidRequestToken",
+      "last": "2026-08-07T08:41:59.866045+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T08:41:59.866045+00:00",
+          "outcome": "useful",
+          "q": "its erroring and saying: invalid request token; it does not let me place a seed nor play anything"
+        }
+      ],
+      "score": 0.942684534,
+      "source_file": "morphovoxel/ui.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "morphovoxel_ui_job_view": {
+      "code_fingerprint": "34d6a2800517295e5cffc7d0426e4043dd8834b3335d9b2a2001e3afd36002dc",
+      "label": "_job_view()",
+      "last": "2026-08-07T07:27:54.672726+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T07:27:54.672726+00:00",
+          "outcome": "useful",
+          "q": "please show how many steps are occuring per second, as well as an easier ui with sliders to adjust configs hi"
+        },
+        {
+          "date": "2026-08-07T07:14:14.478646+00:00",
+          "outcome": "useful",
+          "q": "PermissionError replacing live.json during training preview"
+        },
+        {
+          "date": "2026-08-07T06:54:30.469654+00:00",
+          "outcome": "useful",
+          "q": "How does the dashboard select CPU or CUDA and display live cellular automaton frames?"
+        }
+      ],
+      "score": 2.823982824,
+      "source_file": "morphovoxel/ui.py",
+      "status": "preferred",
+      "uses": 3
+    },
+    "morphovoxel_ui_launch": {
+      "code_fingerprint": "34d6a2800517295e5cffc7d0426e4043dd8834b3335d9b2a2001e3afd36002dc",
+      "label": "_launch()",
+      "last": "2026-08-07T06:54:30.469654+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T06:54:30.469654+00:00",
+          "outcome": "useful",
+          "q": "How does the dashboard select CPU or CUDA and display live cellular automaton frames?"
+        }
+      ],
+      "score": 0.941060103,
+      "source_file": "morphovoxel/ui.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "morphovoxel_utils_write_live_preview": {
+      "code_fingerprint": "2ffe141d7b0f4e4f7c155e0f09c98a6ffed9c1d80f8ef4e1fca67205ce68e068",
+      "label": "write_live_preview()",
+      "last": "2026-08-07T07:27:54.672726+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T07:27:54.672726+00:00",
+          "outcome": "useful",
+          "q": "please show how many steps are occuring per second, as well as an easier ui with sliders to adjust configs hi"
+        },
+        {
+          "date": "2026-08-07T07:14:14.478646+00:00",
+          "outcome": "useful",
+          "q": "PermissionError replacing live.json during training preview"
+        },
+        {
+          "date": "2026-08-07T06:54:30.469654+00:00",
+          "outcome": "useful",
+          "q": "How does the dashboard select CPU or CUDA and display live cellular automaton frames?"
+        }
+      ],
+      "score": 2.823982824,
+      "source_file": "morphovoxel/utils.py",
+      "status": "preferred",
+      "uses": 3
+    },
+    "morphovoxel_visualize": {
+      "code_fingerprint": "22d7b062ae96f125ec42ddc8a64139e0b1758a6838df16969e420da669c42aa0",
+      "label": "visualize.py",
+      "last": "2026-08-07T06:05:10.604669+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T06:05:10.604669+00:00",
+          "outcome": "useful",
+          "q": "how can i run see and interact with the environments"
+        }
+      ],
+      "score": 0.940315529,
+      "source_file": "morphovoxel/visualize.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "readme_saved_state_visualization": {
+      "code_fingerprint": "f8bee09539381dee66690d7dd07caba9d93fba8daad269c13c40668167dadd0a",
+      "label": "Saved-State Visualization Without Retraining",
+      "last": "2026-08-07T06:21:22.035803+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T06:21:22.035803+00:00",
+          "outcome": "useful",
+          "q": "please produce a ui that i can use to navigate through all of these"
+        }
+      ],
+      "score": 0.940559834,
+      "source_file": "README.md",
+      "status": "tentative",
+      "uses": 1
+    },
+    "tests_test_lab": {
+      "code_fingerprint": "e1d225c76a58bd2005262d1f9f3ee9028c154cd1409e59e10c706f8fe9905df3",
+      "label": "test_lab.py",
+      "last": "2026-08-09T21:56:10.643961+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-09T21:56:10.643961+00:00",
+          "outcome": "useful",
+          "q": "should these be commited? why do they have a dot in front of them? What are they used for"
+        }
+      ],
+      "score": 0.999928899,
+      "source_file": "tests/test_lab.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "tests_test_lab_test_design_lab_http_api": {
+      "code_fingerprint": "e1d225c76a58bd2005262d1f9f3ee9028c154cd1409e59e10c706f8fe9905df3",
+      "label": "test_design_lab_http_api()",
+      "last": "2026-08-07T08:38:49.636450+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-07T08:38:49.636450+00:00",
+          "outcome": "useful",
+          "q": "Inspect existing tests and add the smallest regression test for stale dashboard tokens after server restart."
+        }
+      ],
+      "score": 0.942636581,
+      "source_file": "tests/test_lab.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "tests_test_ui": {
+      "code_fingerprint": "7eff98e8e6017a65dbd54333ed6b56739c9c752b801d837ec1980a7e9732dd19",
+      "label": "test_ui.py",
+      "last": "2026-08-09T21:56:10.643961+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-09T21:56:10.643961+00:00",
+          "outcome": "useful",
+          "q": "should these be commited? why do they have a dot in front of them? What are they used for"
+        }
+      ],
+      "score": 0.999928899,
+      "source_file": "tests/test_ui.py",
+      "status": "tentative",
+      "uses": 1
+    }
+  },
+  "version": 1
+}

@@ -60,7 +60,7 @@ Interactive local dashboard:
 python -m morphovoxel.ui --open
 ```
 
-The dashboard navigates every preset and saved run, previews GIF/PNG artifacts and metrics, launches edited YAML as isolated UI jobs, streams logs, and can stop active jobs. Its **Design Lab** opens any training run with `config.yaml` and a local `latest.pt`/`best.pt` checkpoint: double-click to place a seed, click or drag to erase, then play, pause, single-step, reset, change a conditional genome, or inspect editable 3D slices and projections. 3D runs also offer a cube view: drag to rotate, use the wheel to zoom, and switch back to a slice or projection to edit. Choose Auto/CPU/CUDA, enable the live organism view, and set **Save/view every N steps** before launch. Smoke presets default to every step; full presets default to every four steps to reduce preview I/O. It binds to `127.0.0.1:8765` by default and adds no web-framework dependency.
+The dashboard navigates every preset and saved run, previews GIF/PNG artifacts and metrics, launches edited YAML as isolated UI jobs, streams logs, and can stop active jobs. **View Checkpoints** opens any training run with `config.yaml` and a local `latest.pt`/`best.pt` checkpoint: double-click to place a seed, click or drag to erase, then play, pause, single-step, reset, change a conditional genome, or inspect editable 3D slices and projections. 3D runs open in the cube view by default: drag to rotate, use the wheel to zoom, and switch to a slice or projection to edit. Choose Auto/CPU/CUDA and enable the live organism view before launch; during training it updates once every 10 iterations with that iteration's completed rollout. It binds to `127.0.0.1:8765` by default and adds no web-framework dependency.
 
 Smoke checks:
 
@@ -107,7 +107,7 @@ Ecology records each organism separately: light and water absorbed, energy, volu
 
 ## Outputs
 
-Each `runs/<name>` directory contains the exact YAML snapshot, metadata (time, device, PyTorch version, parameter count, seeds, command, and Git commit when available), CSV logs, checkpoints, NumPy rollout states and targets, GIFs, projections, hidden-channel panels, metric plots, and summaries. With `live_preview: true`, `visualizations/live.png` is atomically overwritten every `frame_every` automaton updates so the dashboard can follow the current state without creating thousands of image files. The final GIF and rollout archive retain frames at that cadence and are written at the end. Without `frame_every`, training keeps its original roughly 12-frame final capture; regeneration and ecology default to every step. Visualization reads saved states and never retrains.
+Each `runs/<name>` directory contains the exact YAML snapshot, metadata (time, device, PyTorch version, parameter count, seeds, command, and Git commit when available), CSV logs, checkpoints, NumPy rollout states and targets, GIFs, projections, hidden-channel panels, metric plots, and summaries. With `live_preview: true`, training atomically overwrites `visualizations/live.png` with the completed rollout from iterations 10, 20, 30, and so on, without creating thousands of image files. The final GIF and rollout archive are still generated at the end. Visualization reads saved states and never retrains.
 
 ## Limitations
 

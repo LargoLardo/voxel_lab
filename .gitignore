@@ -4,6 +4,7 @@ __pycache__/
 .test-*/
 .venv/
 .matplotlib/
+.tmp-*/
+.verification-runs/
 runs/
 *.egg-info/
-graphify-out/
