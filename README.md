@@ -1,12 +1,12 @@
 # MorphoVoxel
 
-MorphoVoxel is a reproducible research prototype for testing whether one genome-conditioned, strictly local neural cellular automaton (NCA) can grow multiple stable morphologies in a standalone 3D voxel world and regenerate them after damage. A 2D system provides the cheap first validation; a modular finite-resource ecology is a later extension.
+MorphoVoxel is an interactive artificial-life workbench for training strictly local neural cellular automata (NCAs) that grow stable 2D and 3D organisms, survive damage, and eventually share a voxel environment. A 2D system provides a cheap proving ground; the checkpoint viewer makes growth and regeneration directly editable; the ecology layer is a later integration target.
 
-Neural cellular automata and artificial-life voxel systems are established research areas. This project does not claim either as a new invention. Its intended contribution is a controlled comparison of conditional growth, specialized models, damage-augmented regeneration, spatial scaling, and resource-limited competition. Smoke outputs verify plumbing only; they are not scientific evidence, and hypotheses are not supported until the configured multi-seed experiments have run.
+The current goal is practical organism design, not a claim of scientific novelty. Metrics and matched configurations are retained because they make training failures visible and model choices comparable, while smoke outputs verify plumbing only.
 
-## Research questions and hypotheses
+## Purpose and current direction
 
-The primary question is whether one genome-conditioned 3D NCA can use only local voxel interactions to grow several morphologies from identical seeds while retaining regeneration. Experiments test shared versus specialized parameter efficiency and accuracy, damage augmentation, severity and structural damage effects, larger-grid execution, and long-rollout stability. Ecology asks whether finite light and water change growth and competitive outcomes among fixed pretrained genomes; it is not open-ended evolution.
+The immediate objective is to make individual organisms persistent first: they should grow from a seed, remain close to their target for long horizons, and recover after damage. Once reliable organisms exist, the environment can combine either several specialist NCAs or several genomes interpreted by one conditional NCA. Ecology currently lets fixed pretrained organisms compete for space, light, and water; it is not open-ended evolution.
 
 ## Architecture
 
@@ -37,7 +37,7 @@ One-hot genomes are broadcast spatially and concatenated after local perception.
 4. State-pool damage training plus regeneration sweeps across seven operators and four severity levels.
 5. Fixed-genome competition through occupied space, top-down light, shared diffusing water, and local energy.
 
-The required core is phases 1–4. Genome interpolation is exploratory and reports collapse as readily as hybrids. Resource-aware retraining is separated from the required energy-gated fixed-morphogenesis ecology mode.
+The useful core is phases 1–4. Genome interpolation is exploratory and reports collapse as readily as hybrids. Resource-aware retraining is separated from energy-gated fixed-morphogenesis ecology.
 
 ## Installation
 
@@ -87,17 +87,23 @@ Baselines and controlled analyses:
 
 ```bash
 python scripts/run_specialized_baseline.py --config configs/phase2_3d.yaml
-python scripts/run_interpolation.py --config configs/phase3_conditional.yaml --checkpoint runs/phase3_conditional/checkpoints/latest.pt
-python scripts/run_scaling_experiment.py --config configs/phase3_conditional.yaml --checkpoint runs/phase3_conditional/checkpoints/latest.pt
+python scripts/run_interpolation.py --config configs/phase3_conditional.yaml --checkpoint runs/phase3_conditional/checkpoints/best.pt
+python scripts/run_scaling_experiment.py --config configs/phase3_conditional.yaml --checkpoint runs/phase3_conditional/checkpoints/best.pt
 python scripts/summarize_results.py --runs-root runs
 python scripts/generate_report.py --run-dir runs/<run_name>
 ```
 
 ## Training and comparisons
 
-Training uses variable rollouts, stochastic asynchronous updates, gradient clipping, deterministic seeds, checkpoint/resume state, component CSV logs, and explicit non-finite loss failure. Loss terms cover occupancy, target-conditioned material classification, outside-target leakage, and optional post-horizon stability. Damage training samples intermediate states, refreshes some from seeds, applies configured deletion operators, and commits detached states back to the genome-safe pool.
+Training uses variable rollouts, stochastic asynchronous updates, gradient clipping, deterministic seeds, checkpoint/resume state, component CSV logs, and explicit non-finite loss failure. The loss sees raw occupancy, penalizes values outside `[0,1]`, classifies target materials, penalizes outside-target leakage, and limits excessive occupancy/material/hidden-state magnitude. Every update intersects its before-and-after living masks, so dead cells cannot retain hidden state.
+
+Conditional training keeps genome/state/age tuples in a pool. Within each sampled batch, the worst target matches are reseeded; regeneration training damages the best mature samples; and a randomized continuation is compared directly with the same target before the continued state returns to the pool. Full conditional presets periodically roll every genome for at least 256 steps and save `best.pt` only when the worst genome's late-horizon persistence score improves. `latest.pt` remains the final training state and can therefore be worse than `best.pt`.
 
 The specialized baseline uses one independent NCA per target. The shared comparison uses one four-genome NCA. Fair studies must match optimizer, training budget, architecture width, rollout distribution, targets, and evaluation seeds, then report individual and total specialized parameter counts. The regeneration comparison likewise changes damage augmentation only.
+
+### Genomes or specialist models?
+
+Use specialist models while inventing organisms: each morphology can have its own training schedule and capacity, and one unstable organism cannot compromise the others through shared weights. Use a genome-conditioned model when the organisms should share one cellular rule, storage and inference must stay compact, or interpolation/mutation between organism identities is itself part of the experience. A practical workflow is to train stable specialists first, then use their successful targets and settings to train or distill a shared conditional model. A mixed environment can support both by routing each organism's cells to its assigned model; the current ecology still expects one shared checkpoint, so specialist routing is a future environment change rather than a reason to force every organism into one model immediately.
 
 ## Metrics
 
@@ -111,4 +117,4 @@ Each `runs/<name>` directory contains the exact YAML snapshot, metadata (time, d
 
 ## Limitations
 
-Procedural targets are deliberately simple, occupancy is a continuous unconstrained NCA channel clamped only for losses and observation, and connected-component analysis is CPU-based. Smoke training is too short to yield recognizable morphology. Full scientific claims require multiple training and evaluation seeds, matched budgets, confidence intervals, and inspection of failures. Ecology mode A gates growth but does not teach adaptive developmental policies; mode B requires a separate controlled retraining study. No reproduction, weight mutation, predation, complex chemistry, game engine, or infinite world is implemented.
+Procedural targets are deliberately simple, occupancy remains a continuous unconstrained NCA channel even though its loss penalizes excursions outside `[0,1]`, and connected-component analysis is CPU-based. Smoke training is too short to yield recognizable morphology. Ecology mode A gates growth but does not teach adaptive developmental policies; mode B requires a separate controlled retraining study. No reproduction, weight mutation, predation, complex chemistry, game engine, or infinite world is implemented.

@@ -12,4 +12,7 @@ fire_rate: 0.5
 iterations: 2
 rollout_steps: [3, 4]
 learning_rate: 0.001
-loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5}
+state_limit: 4.0
+loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 1.0, magnitude: 0.001}
+persistence_steps: [1, 1]
+persistence_weight: 1.0

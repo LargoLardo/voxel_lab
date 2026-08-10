@@ -8,7 +8,7 @@ import pytest
 from morphovoxel.checkpointing import save_checkpoint
 from morphovoxel.config import save_config
 from morphovoxel.genomes import MORPHOLOGIES
-from morphovoxel.lab import LabSession
+from morphovoxel.lab import LabSession, find_checkpoint
 from morphovoxel.model_2d import NeuralCA2D
 from morphovoxel.model_3d import NeuralCA3D
 from morphovoxel.state import StateLayout
@@ -30,6 +30,13 @@ def _saved_run(root, dimensions: int, conditional: bool = False):
     model = model_class(layout.channels, 4, len(MORPHOLOGIES) if conditional else 0, 1.0)
     save_checkpoint(run / "checkpoints" / "latest.pt", model, config=config)
     return run
+
+
+def test_lab_prefers_persistence_scored_checkpoint(tmp_path):
+    run = _saved_run(tmp_path, 3, True)
+    (run / "checkpoints" / "best.pt").write_bytes(b"best")
+
+    assert find_checkpoint(run).name == "best.pt"
 
 
 @pytest.mark.parametrize("dimensions,conditional", [(2, False), (3, True)])

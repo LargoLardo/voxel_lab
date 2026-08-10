@@ -9,7 +9,7 @@ base:
   model_width: 64
   fire_rate: 0.5
   steps: 48
-  checkpoint: runs/phase3_conditional/checkpoints/latest.pt
+  checkpoint: runs/phase3_conditional/checkpoints/best.pt
   incident_light: 1.0
   light_attenuation: 0.7
   light_absorption: 0.05

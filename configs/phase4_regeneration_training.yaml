@@ -16,6 +16,13 @@ fresh_fraction: 0.25
 damage_probability: 0.5
 damage_types: [sphere, cuboid, top]
 damage_severities: [0.1, 0.25, 0.5]
+damage_min_age: 48
 learning_rate: 0.001
-loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5}
-stability_steps: 8
+state_limit: 4.0
+loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 1.0, magnitude: 0.001}
+persistence_steps: [16, 32]
+persistence_weight: 1.0
+validation_steps: 256
+validation_start: 64
+validation_interval: 32
+validation_every: 250

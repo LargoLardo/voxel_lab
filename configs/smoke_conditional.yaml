@@ -11,6 +11,14 @@ model_width: 8
 fire_rate: 1.0
 iterations: 1
 rollout_steps: [2, 2]
+pool_size: 8
+fresh_fraction: 0.25
 learning_rate: 0.001
-loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5}
-
+state_limit: 4.0
+loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 1.0, magnitude: 0.001}
+persistence_steps: [1, 2]
+persistence_weight: 1.0
+validation_steps: 8
+validation_start: 4
+validation_interval: 2
+validation_every: 1

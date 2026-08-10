@@ -13,14 +13,19 @@ def morphology_loss(
     material_target: torch.Tensor,
     layout: StateLayout,
     weights: dict[str, float] | None = None,
+    state_limit: float = 4.0,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-    """Compute occupancy, material, and outside-target leakage losses."""
+    """Compute target, range, leakage, and bounded-state losses."""
+    if state_limit <= 0:
+        raise ValueError("state_limit must be positive")
     weights = weights or {}
-    occupancy = state[:, layout.occupancy].clamp(0, 1)
+    occupancy = state[:, layout.occupancy]
     target = occupancy_target.to(occupancy)
     components = {
         "occupancy": F.mse_loss(occupancy, target),
-        "leakage": (occupancy * (1 - target)).mean(),
+        "leakage": (occupancy * (1 - target)).square().mean(),
+        "occupancy_range": (F.relu(-occupancy).square() + F.relu(occupancy - 1).square()).mean(),
+        "magnitude": F.relu(state.abs() - state_limit).square().mean(),
     }
     occupied = target > 0.5
     logits = state[:, layout.material_slice].movedim(1, -1)
@@ -30,4 +35,4 @@ def morphology_loss(
 
 
 def stability_loss(state: torch.Tensor, continued_state: torch.Tensor) -> torch.Tensor:
-    return (state[:, :1].clamp(0, 1) - continued_state[:, :1].clamp(0, 1)).square().mean()
+    return (state[:, :1] - continued_state[:, :1]).square().mean()

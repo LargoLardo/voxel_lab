@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", str(Path.cwd() / ".matplotlib"))
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 import imageio.v2 as imageio
 import matplotlib.pyplot as plt

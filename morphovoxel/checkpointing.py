@@ -9,13 +9,25 @@ import numpy as np
 import torch
 
 
-def save_checkpoint(path: str | Path, model, optimizer=None, *, step: int = 0, scheduler=None, config=None, pool=None, genomes=None) -> None:
+def save_checkpoint(
+    path: str | Path,
+    model,
+    optimizer=None,
+    *,
+    step: int = 0,
+    scheduler=None,
+    config=None,
+    pool=None,
+    genomes=None,
+    validation=None,
+) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "model": model.state_dict(), "optimizer": optimizer.state_dict() if optimizer else None,
         "scheduler": scheduler.state_dict() if scheduler else None, "step": step, "config": config,
         "pool": pool.state_dict() if pool else None, "genomes": genomes,
+        "validation": validation,
         "rng": {"python": random.getstate(), "numpy": np.random.get_state(), "torch": torch.get_rng_state()},
     }
     torch.save(payload, path)

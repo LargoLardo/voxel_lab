@@ -24,7 +24,7 @@ from .targets.targets_2d import TARGETS_2D
 
 def find_checkpoint(run: Path) -> Path | None:
     """Return the preferred local inference checkpoint for a run."""
-    for name in ("latest.pt", "best.pt"):
+    for name in ("best.pt", "latest.pt"):
         path = run / "checkpoints" / name
         if path.is_file():
             return path

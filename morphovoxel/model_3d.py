@@ -35,4 +35,7 @@ class NeuralCA3D(nn.Module):
             features = torch.cat((features, genome[:, :, None, None, None].expand(-1, -1, *state.shape[2:])), 1)
         delta = self.update(features)
         fire = torch.rand_like(state[:, :1]) <= self.fire_rate
-        return state + delta * fire * self.living_mask(state)
+        before = self.living_mask(state)
+        updated = state + delta * fire * before
+        alive = before & self.living_mask(updated)
+        return updated * alive

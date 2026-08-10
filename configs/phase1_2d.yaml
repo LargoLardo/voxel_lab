@@ -11,6 +11,10 @@ model_width: 64
 fire_rate: 0.5
 iterations: 2000
 rollout_steps: [48, 96]
+pool_size: 64
+fresh_fraction: 0.25
 learning_rate: 0.001
-loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5}
-stability_steps: 8
+state_limit: 4.0
+loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 1.0, magnitude: 0.001}
+persistence_steps: [16, 32]
+persistence_weight: 1.0
