@@ -94,6 +94,9 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         assert "Experiment control room" in root
         assert "Quick settings" in root
         assert "View Checkpoints" in root
+        assert 'id="labDisplay"' in root
+        assert "Training target" in root
+        assert "source=${encodeURIComponent(source)}" in root
         assert "Design lab" not in root
         assert root.index('<option value="voxels">3D voxels</option>') < root.index('<option value="slice">Z slice</option>')
         assert "meta.dimensions===3?'voxels':'slice'" in root

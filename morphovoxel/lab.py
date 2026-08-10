@@ -4,7 +4,7 @@ from __future__ import annotations
 import io
 import pickle
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +18,8 @@ from .model_3d import NeuralCA3D
 from .random_utils import resolve_device
 from .seeding import seed_state
 from .state import StateLayout
+from .targets import make_target_2d, make_target_3d
+from .targets.targets_2d import TARGETS_2D
 
 
 def find_checkpoint(run: Path) -> Path | None:
@@ -61,6 +63,7 @@ class LabSession:
     steps: int = 0
     rate: float = 0.0
     version: int = 0
+    target_cache: dict[int, tuple[torch.Tensor, torch.Tensor]] = field(default_factory=dict, repr=False)
 
     @classmethod
     def from_run(cls, run: Path, requested_device: str = "auto") -> "LabSession":
@@ -113,15 +116,28 @@ class LabSession:
             "slice": depth, "top": depth, "front": height, "side": width,
         }
 
+    def _target(self) -> tuple[str, torch.Tensor, torch.Tensor]:
+        names = MORPHOLOGIES if self.dimensions == 3 else TARGETS_2D
+        index = self.genome_index if self.conditional else -1
+        kind = names[self.genome_index] if self.conditional else str(self.config.get("target_kind", names[0]))
+        if index not in self.target_cache:
+            maker = make_target_3d if self.dimensions == 3 else make_target_2d
+            occupancy, materials = maker(kind, int(self.config.get("world_size", self.shape[-1])), int(self.config.get("seed", 0)))
+            self.target_cache[index] = torch.from_numpy(occupancy), torch.from_numpy(materials)
+        occupancy, materials = self.target_cache[index]
+        return kind, occupancy, materials
+
     def summary(self) -> dict[str, object]:
         views, layers = self._views()
         occupied = int((self.state[0, self.layout.occupancy] > 0.1).sum().item())
+        target_name, target, _ = self._target()
         return {
             "run": self.run_name, "dimensions": self.dimensions, "shape": self.shape,
             "device": str(self.device), "conditional": self.conditional,
             "genomes": list(MORPHOLOGIES) if self.conditional else [],
             "genome": self.genome_index, "steps": self.steps,
             "steps_per_second": self.rate, "occupied_cells": occupied,
+            "target_name": target_name, "target_cells": int((target > 0.5).sum().item()),
             "views": views, "layers": layers, "frame_version": self.version,
         }
 
@@ -214,8 +230,18 @@ class LabSession:
         self.version += 1
         return self.summary()
 
-    def _view(self, view: str, layer: int) -> np.ndarray:
-        volume = torch.nan_to_num(self.state[0, self.layout.occupancy].detach()).clamp(0, 1).cpu()
+    def _display_volume(self, source: str) -> tuple[torch.Tensor, torch.Tensor]:
+        if source == "organism":
+            occupancy = torch.nan_to_num(self.state[0, self.layout.occupancy].detach()).clamp(0, 1).cpu()
+            materials = torch.nan_to_num(self.state[0, self.layout.material_slice].detach()).argmax(0).cpu()
+            return occupancy, materials
+        if source == "target":
+            _, occupancy, materials = self._target()
+            return occupancy, materials
+        raise ValueError("source must be organism or target")
+
+    def _view(self, view: str, layer: int, source: str = "organism") -> np.ndarray:
+        volume, _ = self._display_volume(source)
         if self.dimensions == 2:
             image = volume
         elif view == "slice":
@@ -230,14 +256,14 @@ class LabSession:
             raise ValueError("unknown lab view")
         return image.numpy()
 
-    def frame_png(self, view: str = "plane", layer: int = 0) -> bytes:
+    def frame_png(self, view: str = "plane", layer: int = 0, source: str = "organism") -> bytes:
         views, layers = self._views()
         if view not in views:
             raise ValueError("unknown lab view")
         count = layers[view]
         if not 0 <= layer < count:
             raise ValueError("layer is outside the cellular world")
-        values = self._view(view, layer)[..., None]
+        values = self._view(view, layer, source)[..., None]
         background = np.asarray([3, 8, 6], dtype=np.float32)
         foreground = np.asarray([120, 247, 191], dtype=np.float32)
         rgb = (background + values * (foreground - background)).astype(np.uint8)
@@ -245,11 +271,11 @@ class LabSession:
         Image.fromarray(rgb, "RGB").save(output, format="PNG")
         return output.getvalue()
 
-    def voxel_data(self, threshold: float = 0.1) -> dict[str, object]:
+    def voxel_data(self, threshold: float = 0.1, source: str = "organism") -> dict[str, object]:
         """Return visible 3D cells for the browser's interactive cube renderer."""
         if self.dimensions != 3:
             raise ValueError("voxel view is only available for 3D runs")
-        occupancy = torch.nan_to_num(self.state[0, self.layout.occupancy].detach()).clamp(0, 1)
+        occupancy, material_map = self._display_volume(source)
         occupied = occupancy > threshold
         interior = occupied.clone()
         interior[[0, -1], :, :] = False
@@ -262,6 +288,6 @@ class LabSession:
         )
         visible = occupied & ~interior
         coordinates = visible.nonzero()
-        materials = torch.nan_to_num(self.state[0, self.layout.material_slice].detach()).argmax(0)[visible]
+        materials = material_map[visible]
         voxels = torch.cat((coordinates, occupancy[visible, None], materials[:, None]), dim=1).cpu().tolist()
         return {"shape": list(self.shape), "voxels": voxels, "frame_version": self.version}
