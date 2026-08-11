@@ -72,6 +72,15 @@ These CPU presets are independent, intentionally tiny pipeline checks. They do n
 .venv\Scripts\python -m morphovoxel.run_ecology --config configs\smoke_tree_ecology.yaml
 ```
 
+## Quick cleanup
+
+Use these commands in the terminal to quickly preview and erase unnecessary temporary files/caches from the local repository.
+
+```powershell
+.venv\Scripts\python -m morphovoxel.cleanup
+.venv\Scripts\python -m morphovoxel.cleanup --apply
+```
+
 ## Three separate inputs
 
 - **Genome** is inherited and fixed for an organism unless live remodeling is explicitly enabled. A tree genome contains one discrete topology family, ten bounded continuous style genes, and one reproducible style seed.
