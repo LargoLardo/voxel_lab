@@ -1,0 +1,59 @@
+run_name: tree_ecology
+device: auto
+seed: 42
+world_size: 16
+organisms: 2
+materials: 4
+hidden_channels: 8
+model_width: 64
+fire_rate: 0.5
+steps: 256
+frame_every: 4
+live_preview: true
+checkpoint: runs/tree_environment/checkpoints/best.pt
+context_channels: 12
+tree_genomes:
+  - family: branching
+    style_seed: 101
+    genes:
+      height: 0.2
+      trunk_thickness: 0.15
+      branch_density: 0.35
+      branch_inclination: 0.1
+      branch_length: 0.25
+      canopy_spread: 0.2
+      taper: 0.1
+      asymmetry: -0.1
+      light_tropism: 0.6
+      root_canopy_allocation: 0.0
+  - family: conifer
+    style_seed: 202
+    genes:
+      height: 0.35
+      trunk_thickness: 0.1
+      branch_density: 0.2
+      branch_inclination: -0.35
+      branch_length: -0.1
+      canopy_spread: -0.25
+      taper: 0.4
+      asymmetry: 0.05
+      light_tropism: 0.5
+      root_canopy_allocation: -0.1
+seed_positions:
+  - [13, 8, 5]
+  - [13, 8, 11]
+incident_light: 1.0
+light_attenuation: 0.7
+lateral_light_diffusion: 0.05
+light_absorption: 0.05
+initial_water: 1.0
+water_diffusion: 0.1
+water_absorption: 0.05
+initial_energy: 1.0
+energy_diffusion: 0.05
+maintenance_cost: 0.001
+growth_cost: 0.1
+remodeling_cost: 0.01
+occupancy_threshold: 0.5
+gravity: [-1.0, 0.0, 0.0]
+wind: [0.0, 0.0, 0.0]

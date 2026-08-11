@@ -11,13 +11,22 @@ from .perception_3d import perceive_3d
 class NeuralCA3D(nn.Module):
     """Shared local 3x3x3 update rule for a semantic voxel state."""
 
-    def __init__(self, channels: int, hidden: int = 64, genome_size: int = 0, fire_rate: float = 0.5):
+    def __init__(
+        self,
+        channels: int,
+        hidden: int = 64,
+        genome_size: int = 0,
+        fire_rate: float = 0.5,
+        context_channels: int = 0,
+    ):
         super().__init__()
         if not 0 < fire_rate <= 1:
             raise ValueError("fire_rate must be in (0, 1]")
-        self.channels, self.genome_size, self.fire_rate = channels, genome_size, fire_rate
+        if context_channels < 0:
+            raise ValueError("context_channels must be non-negative")
+        self.channels, self.genome_size, self.context_channels, self.fire_rate = channels, genome_size, context_channels, fire_rate
         self.update = nn.Sequential(
-            nn.Conv3d(channels * 5 + genome_size, hidden, 1), nn.ReLU(), nn.Conv3d(hidden, channels, 1)
+            nn.Conv3d(channels * 5 + genome_size + context_channels, hidden, 1), nn.ReLU(), nn.Conv3d(hidden, channels, 1)
         )
         nn.init.normal_(self.update[-1].weight, std=1e-3)
         nn.init.zeros_(self.update[-1].bias)
@@ -25,7 +34,12 @@ class NeuralCA3D(nn.Module):
     def living_mask(self, state: torch.Tensor) -> torch.Tensor:
         return F.max_pool3d(state[:, :1], 3, stride=1, padding=1) > 0.1
 
-    def forward(self, state: torch.Tensor, genome: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self,
+        state: torch.Tensor,
+        genome: torch.Tensor | None = None,
+        context: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         if state.ndim != 5 or state.shape[1] != self.channels:
             raise ValueError("state must have shape [B,C,D,H,W]")
         features = perceive_3d(state)
@@ -33,6 +47,13 @@ class NeuralCA3D(nn.Module):
             if genome is None or genome.shape != (state.shape[0], self.genome_size):
                 raise ValueError("genome must have shape [B, genome_size]")
             features = torch.cat((features, genome[:, :, None, None, None].expand(-1, -1, *state.shape[2:])), 1)
+        if self.context_channels:
+            expected = (state.shape[0], self.context_channels, *state.shape[2:])
+            if context is None or context.shape != expected:
+                raise ValueError("context must have shape [B, context_channels, D, H, W]")
+            features = torch.cat((features, context.to(features)), 1)
+        elif context is not None:
+            raise ValueError("this model was created without environment context channels")
         delta = self.update(features)
         fire = torch.rand_like(state[:, :1]) <= self.fire_rate
         before = self.living_mask(state)

@@ -1,13 +1,21 @@
 import json
+import hashlib
 import threading
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 import numpy as np
 import pytest
+import torch
 
+from morphovoxel.environment import ENVIRONMENT_CHANNELS, EnvironmentSpec
+from morphovoxel.genomes import TreeGenome
+from morphovoxel.state import StateLayout
+from morphovoxel.targets import make_tree_target
 from morphovoxel.ui import CONFIGS, _inside, _launch, build_state, create_server
 from morphovoxel.utils import steps_per_second, write_live_preview
+from morphovoxel.validation import ValidationCase, ValidationCriteria, ValidationReport, ValidationTrial
 
 
 def test_step_rate_uses_completed_updates(monkeypatch):
@@ -34,6 +42,11 @@ def test_live_preview_drops_locked_metadata_instead_of_crashing(tmp_path, monkey
 def test_full_presets_precede_smoke_presets_and_missing_dependencies_are_blocked(tmp_path, monkeypatch):
     names = list(CONFIGS)
     assert names[0] == "full_experiment.yaml"
+    assert names[1:6] == [
+        "tree_specialist.yaml", "tree_family.yaml", "tree_regeneration.yaml",
+        "tree_environment.yaml", "tree_ecology.yaml",
+    ]
+    assert all(name.startswith("smoke_") for name in names[-10:])
     assert names[-5:] == [
         "smoke_2d.yaml", "smoke_3d.yaml", "smoke_conditional.yaml",
         "smoke_regeneration.yaml", "smoke_ecology.yaml",
@@ -45,6 +58,16 @@ def test_full_presets_precede_smoke_presets_and_missing_dependencies_are_blocked
             _launch(server, {
                 "config": "phase4_regeneration.yaml",
                 "content": "checkpoints:\n  regeneration: runs/missing/checkpoints/latest.pt\n",
+                "device": "cpu",
+                "live_preview": True,
+            })
+        with pytest.raises(ValueError, match=r"tree_specialist.*best\.pt"):
+            _launch(server, {
+                "config": "tree_family.yaml",
+                "content": (
+                    "run_name: tree_family\nmodel_kind: tree_family\n"
+                    "initialize_from_specialist: runs/tree_specialist/checkpoints/best.pt\n"
+                ),
                 "device": "cpu",
                 "live_preview": True,
             })
@@ -92,8 +115,18 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         root = urlopen(f"http://127.0.0.1:{server.server_port}/", timeout=5).read().decode()
         payload = json.load(urlopen(f"http://127.0.0.1:{server.server_port}/api/state", timeout=5))
         assert "Experiment control room" in root
+        assert "Organism design workbench" in root
         assert "Quick settings" in root
         assert "View Checkpoints" in root
+        assert "Specialist Lab" in root and "Tree Genome Lab" in root and "Environment Lab" in root
+        assert "Variant Archive" in root and "Legacy" in root
+        assert 'id="labCheckpoint"' in root
+        assert 'id="treeGeneControls"' in root and "data-tree-range" in root
+        assert 'id="treeLiveRemodel"' in root and "Genome staged" in root
+        assert 'id="treeStoreA"' in root and 'id="treeStoreB"' in root
+        assert 'id="treeJsonFile"' in root and "Download JSON" in root
+        assert 'id="environmentControls"' in root and "environment_overlays" in root
+        assert "/api/lab/validate" in root and "/api/archive/save" in root
         assert 'id="labDisplay"' in root
         assert "Training target" in root
         assert "source=${encodeURIComponent(source)}" in root
@@ -117,6 +150,152 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         assert "1× uses one-fifth of measured device throughput" in root
         assert payload["runs"][0]["name"] == "demo"
         assert payload["hardware"]["auto_device"] in {"cpu", "cuda"}
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_validation_route_bounds_inputs_and_does_not_hold_lab_lock(tmp_path):
+    server = create_server(tmp_path, port=0)
+
+    class Lab:
+        def validate_tree_candidate(self, **value):
+            assert server.lab_lock.acquire(blocking=False)
+            server.lab_lock.release()
+            return {"report": {"validated": True}, "arguments": value}
+
+    server.lab = Lab()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def post(**value):
+        request = Request(
+            f"http://127.0.0.1:{server.server_port}/api/lab/validate",
+            data=json.dumps({"token": server.token, **value}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        return json.load(urlopen(request, timeout=10))
+
+    try:
+        result = post(steps=512, recovery_steps=128, fire_seeds=[3, 4])
+        assert result["arguments"] == {"steps": 512, "recovery_steps": 128, "fire_seeds": [3, 4]}
+        with pytest.raises(HTTPError) as error:
+            post(steps=2049, recovery_steps=128, fire_seeds=[3])
+        assert error.value.code == 400
+        with pytest.raises(HTTPError) as error:
+            post(steps=512, recovery_steps=128, fire_seeds=list(range(9)))
+        assert error.value.code == 400
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_variant_archive_http_save_filter_preview_and_reload(tmp_path):
+    genome = TreeGenome(family="conifer", style_seed=7)
+    environment = EnvironmentSpec(light_direction_x=0.5, seed=8)
+    case = ValidationCase("candidate", "candidate", genome, environment, 3)
+    trial = ValidationTrial(
+        case, 512, 128, True, True, 0.9, (),
+        {"target_iou": 0.9, "regeneration_score": 0.8},
+        {"height": 8.0, "canopy_spread": 5.0},
+    )
+    report = ValidationReport((trial,), ValidationCriteria(min_steps=512, min_recovery_steps=128))
+    run = tmp_path / "runs" / "tree_family"
+    (run / "checkpoints").mkdir(parents=True)
+    (run / "checkpoints" / "best.pt").write_bytes(b"checkpoint")
+    layout = StateLayout(4, 2)
+    target_values, material_values = make_tree_target(genome, 12, environment)
+    target = torch.from_numpy(target_values)
+    materials = torch.from_numpy(material_values)
+
+    class Model:
+        context_channels = len(ENVIRONMENT_CHANNELS)
+        genome_size = TreeGenome.model_size()
+
+    class Lab:
+        run_name = "tree_family"
+        checkpoint_name = "best.pt"
+        checkpoint_sha256 = hashlib.sha256(b"checkpoint").hexdigest()
+        model_kind = "tree_family"
+        dimensions = 3
+        config = {"model_width": 4}
+        model = Model()
+        state = torch.zeros((1, layout.channels, 12, 12, 12))
+        active_tree_genome = genome
+        pending_tree_genome = genome
+        environment_spec = environment
+        last_validation_report = report
+        steps = 5
+        last_validation = {
+            "checkpoint": checkpoint_name,
+            "checkpoint_sha256": checkpoint_sha256,
+            "genome": genome.to_dict(),
+            "environment": environment.to_dict(),
+            "report": report.to_dict(),
+        }
+
+        def __init__(self):
+            self.layout = layout
+
+        @staticmethod
+        def _target():
+            return "tree", target, materials
+
+        def set_tree_genome(self, value):
+            self.pending_tree_genome = TreeGenome.from_dict(value)
+
+        def set_environment(self, value):
+            self.environment_spec = EnvironmentSpec.from_dict(value)
+
+        def summary(self):
+            return {
+                "run": self.run_name, "checkpoint": self.checkpoint_name,
+                "pending_tree_genome": self.pending_tree_genome.to_dict(),
+                "environment": self.environment_spec.to_dict(),
+            }
+
+    lab = Lab()
+    server = create_server(tmp_path, port=0)
+    server.lab = lab
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def post(path, **value):
+        request = Request(
+            f"http://127.0.0.1:{server.server_port}{path}",
+            data=json.dumps({"token": server.token, **value}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        return json.load(urlopen(request, timeout=10))
+
+    try:
+        saved = post("/api/archive/save", method="manual", parents=[])
+        variant_id = saved["variant_id"]
+        listing = json.load(urlopen(
+            f"http://127.0.0.1:{server.server_port}/api/archive?family=conifer&min_score=0.8", timeout=10,
+        ))
+        assert [item["variant_id"] for item in listing["variants"]] == [variant_id]
+        preview = urlopen(
+            f"http://127.0.0.1:{server.server_port}/api/archive/{variant_id}/preview/target", timeout=10,
+        ).read()
+        assert preview.startswith(b"\x89PNG")
+
+        lab.pending_tree_genome = TreeGenome(family="weeping")
+        with pytest.raises(HTTPError) as error:
+            post("/api/archive/save", method="manual", parents=[])
+        assert error.value.code == 400
+        assert "apply the staged genome" in json.load(error.value)["error"]
+        lab.pending_tree_genome = genome
+        accepted_binding = lab.last_validation
+        lab.last_validation = {**accepted_binding, "checkpoint": "latest.pt"}
+        with pytest.raises(HTTPError) as error:
+            post("/api/archive/save", method="manual", parents=[])
+        assert error.value.code == 400
+        lab.last_validation = accepted_binding
+        lab.pending_tree_genome = TreeGenome(family="weeping")
+        loaded = post("/api/archive/load", variant_id=variant_id)
+        assert loaded["lab"]["pending_tree_genome"] == genome.to_dict()
+        assert loaded["lab"]["environment"] == environment.to_dict()
     finally:
         server.shutdown()
         server.server_close()

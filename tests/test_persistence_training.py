@@ -1,8 +1,11 @@
+import random
+
+import numpy as np
 import torch
 
 from morphovoxel.genomes import MORPHOLOGIES
 from morphovoxel.state import StateLayout
-from morphovoxel.training.trainer import _pool_actions, _step_range, _validate_persistence, train
+from morphovoxel.training.trainer import _pool_actions, _restore_rng_state, _step_range, _validate_persistence, train
 
 
 def test_step_range_rejects_negative_scalar():
@@ -12,6 +15,26 @@ def test_step_range_rejects_negative_scalar():
         pass
     else:
         raise AssertionError("negative steps must be rejected")
+
+
+def test_resume_rng_state_continues_python_numpy_and_torch_streams():
+    random.seed(3)
+    np.random.seed(4)
+    torch.manual_seed(5)
+    state = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+        "cuda": None,
+    }
+    expected = (random.random(), float(np.random.random()), float(torch.rand(())))
+    random.seed(30)
+    np.random.seed(40)
+    torch.manual_seed(50)
+
+    _restore_rng_state(state)
+
+    assert (random.random(), float(np.random.random()), float(torch.rand(()))) == expected
 
 
 def test_pool_actions_reseed_worst_and_damage_low_loss_mature_samples():

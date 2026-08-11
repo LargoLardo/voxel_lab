@@ -1,0 +1,31 @@
+run_name: smoke_tree_ecology
+device: cpu
+seed: 7
+world_size: 16
+organisms: 2
+materials: 4
+hidden_channels: 2
+model_width: 8
+fire_rate: 1.0
+steps: 2
+frame_every: 1
+context_channels: 12
+tree_genomes:
+  - {family: branching, style_seed: 7, genes: {height: 0.2}}
+  - {family: conifer, style_seed: 8, genes: {canopy_spread: -0.2}}
+seed_positions:
+  - [13, 8, 5]
+  - [13, 8, 11]
+incident_light: 1.0
+light_attenuation: 0.7
+light_absorption: 0.05
+initial_water: 1.0
+water_diffusion: 0.1
+water_absorption: 0.05
+initial_energy: 1.0
+energy_diffusion: 0.05
+maintenance_cost: 0.001
+growth_cost: 0.1
+remodeling_cost: 0.01
+gravity: [-1.0, 0.0, 0.0]
+wind: [0.0, 0.0, 0.0]

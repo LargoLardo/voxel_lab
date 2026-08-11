@@ -1,4 +1,6 @@
-# MorphoVoxel Experiment Report
+# Legacy Phase-Based MorphoVoxel Experiment Report
+
+> **Legacy document.** This file preserves the original planned scientific-experiment framing for compatibility and historical context. MorphoVoxel is now an organism-design workbench centered on specialist trees, continuous tree genomes, persistence validation, environmental conditioning, and ecology routing. No unrun hypothesis below should be read as a result; see `README.md` and `docs/architecture.md` for the current workflow.
 
 ## 1. Research question
 
@@ -63,4 +65,3 @@ Smoke-test outputs are functional checks, not scientific evidence. Conclusions r
 ## 16. Conclusions
 
 The experiment has not yet been run.
-
