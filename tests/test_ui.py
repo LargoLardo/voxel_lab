@@ -115,12 +115,19 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         root = urlopen(f"http://127.0.0.1:{server.server_port}/", timeout=5).read().decode()
         payload = json.load(urlopen(f"http://127.0.0.1:{server.server_port}/api/state", timeout=5))
         assert "Experiment control room" in root
-        assert "Organism design workbench" in root
+        assert "Overview is an information page" in root
         assert "Quick settings" in root
         assert "View Checkpoints" in root
-        assert "Specialist Lab" in root and "Tree Genome Lab" in root and "Environment Lab" in root
+        assert "Specialist" in root and "Tree Genome Lab" in root and "Environment Lab" in root
         assert "Variant Archive" in root and "Legacy" in root
+        assert root.index('data-page="specialist"') < root.index('data-page="family"')
+        assert root.index('data-page="family"') < root.index('data-page="regeneration"')
+        assert root.index('data-page="regeneration"') < root.index('data-page="environment"')
+        assert root.index('data-page="environment"') < root.index('data-page="ecology"')
+        assert 'id="overviewPage"' in root and 'id="trainingPage"' in root
         assert 'id="labCheckpoint"' in root
+        assert 'id="openTreeGenomeWindow"' in root and 'id="openEnvironmentWindow"' in root
+        assert "openUtilityWindow('genome')" in root and "openUtilityWindow('environment')" in root
         assert 'id="treeGeneControls"' in root and "data-tree-range" in root
         assert 'id="treeLiveRemodel"' in root and "Genome staged" in root
         assert 'id="treeStoreA"' in root and 'id="treeStoreB"' in root
@@ -128,7 +135,8 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         assert 'id="environmentControls"' in root and "environment_overlays" in root
         assert "/api/lab/validate" in root and "/api/archive/save" in root
         assert 'id="labDisplay"' in root
-        assert "Training target" in root
+        assert 'id="labTargetCanvas"' in root and "Always shown for comparison" in root
+        assert "/api/lab/voxels?source=target" in root
         assert "source=${encodeURIComponent(source)}" in root
         assert "Design lab" not in root
         assert root.index('<option value="voxels">3D voxels</option>') < root.index('<option value="slice">Z slice</option>')
