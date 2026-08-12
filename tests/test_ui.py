@@ -125,16 +125,24 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         assert root.index('data-page="regeneration"') < root.index('data-page="environment"')
         assert root.index('data-page="environment"') < root.index('data-page="ecology"')
         assert 'id="overviewPage"' in root and 'id="trainingPage"' in root
+        assert 'id="dependencyCheckpoint"' in root
+        assert "'tree_family.yaml':{key:'initialize_from_specialist'" in root
+        assert "'tree_regeneration.yaml':{key:'resume'" in root
+        assert "'tree_environment.yaml':{key:'resume'" in root
+        assert "'tree_ecology.yaml':{key:'checkpoint'" in root
+        assert "No compatible checkpoints found" in root
         assert 'id="labCheckpoint"' in root
         assert 'id="openTreeGenomeWindow"' in root and 'id="openEnvironmentWindow"' in root
-        assert "openUtilityWindow('genome')" in root and "openUtilityWindow('environment')" in root
+        assert "openUtilityWindow('genome')" in root and "openUtilityWindow('environment-lab')" in root
+        assert "page==='environment-lab'" in root
+        assert "environment:{kind:'environment',number:'04'" in root
         assert 'id="treeGeneControls"' in root and "data-tree-range" in root
         assert 'id="treeLiveRemodel"' in root and "Genome staged" in root
         assert 'id="treeStoreA"' in root and 'id="treeStoreB"' in root
         assert 'id="treeJsonFile"' in root and "Download JSON" in root
-        assert 'id="environmentControls"' in root and "environment_overlays" in root
+        assert 'id="environmentControls"' in root and "environmentDraft" in root
         assert "/api/lab/validate" in root and "/api/archive/save" in root
-        assert 'id="labDisplay"' in root
+        assert 'id="labDisplay"' not in root
         assert 'id="labTargetCanvas"' in root and "Always shown for comparison" in root
         assert "/api/lab/voxels?source=target" in root
         assert "source=${encodeURIComponent(source)}" in root
@@ -146,7 +154,9 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         assert "Drag to rotate" in root
         assert "const center=[x-(width-1)/2,(depth-1)/2-z,y-(height-1)/2]" in root
         assert "r.status===403&&data.token&&options.body" in root
-        assert "End state every 10 iterations" in root
+        assert "End state every 10 iterations" not in root
+        assert "Training previews show the completed rollout every 10 iterations" not in root
+        assert "Tiny smoke runs can still be faster on CPU" not in root
         assert 'id="frameEvery"' not in root
         assert "steps/s" in root
         assert "Playback speed" in root
@@ -157,10 +167,33 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         assert "labDeviceRate*speed/5" in root
         assert "1× uses one-fifth of measured device throughput" in root
         assert payload["runs"][0]["name"] == "demo"
+        assert payload["runs"][0]["model_kind"] == ""
+        assert payload["runs"][0]["context_channels"] == 0
         assert payload["hardware"]["auto_device"] in {"cpu", "cuda"}
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_dashboard_exposes_checkpoint_compatibility_metadata(tmp_path):
+    run = tmp_path / "runs" / "specialist_a"
+    (run / "checkpoints").mkdir(parents=True)
+    (run / "checkpoints" / "best.pt").write_bytes(b"checkpoint")
+    (run / "config.yaml").write_text(
+        "model_kind: tree_specialist\nenvironment_conditioning: false\n",
+        encoding="utf-8",
+    )
+    (run / "metadata.json").write_text(
+        json.dumps({"model_kind": "tree_specialist", "context_channels": 0}),
+        encoding="utf-8",
+    )
+
+    item = build_state(tmp_path)["runs"][0]
+
+    assert item["kind"] == "specialist"
+    assert item["model_kind"] == "tree_specialist"
+    assert item["context_channels"] == 0
+    assert item["checkpoints"] == ["best.pt"]
 
 
 def test_validation_route_bounds_inputs_and_does_not_hold_lab_lock(tmp_path):

@@ -66,7 +66,7 @@ class StatePool:
             raise ValueError("sample count must fit the pool")
         indices = torch.randperm(len(self.states), generator=generator)[:count]
         return PoolBatch(
-            indices,
+            indices.to(device),
             self.states[indices].to(device),
             self.genomes[indices].to(device),
             self.ages[indices].to(device),
@@ -80,8 +80,9 @@ class StatePool:
     def commit(self, batch: PoolBatch, states: torch.Tensor, elapsed: int) -> None:
         if len(states) != len(batch.indices):
             raise ValueError("replacement batch size mismatch")
-        self.states[batch.indices] = states.detach().cpu()
-        self.ages[batch.indices] = batch.ages.cpu() + elapsed
+        indices = batch.indices.detach().cpu()
+        self.states[indices] = states.detach().cpu()
+        self.ages[indices] = batch.ages.cpu() + elapsed
 
     def replace_entries(
         self,

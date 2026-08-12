@@ -1,4 +1,5 @@
 import torch
+import pytest
 
 from morphovoxel.training.state_pool import StatePool
 
@@ -42,3 +43,21 @@ def test_pool_keeps_tree_target_environment_and_style_identity_paired():
         environment_specs=torch.tensor([[9.0, 19.0]], dtype=torch.float64), style_seeds=torch.tensor([109]),
     )
     assert pool.genomes[1, 0] == 9 and pool.style_seeds[1] == 109 and pool.ages[1] == 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+def test_cuda_pool_indices_can_select_reseed_entries_and_commit_to_cpu():
+    pool = StatePool(torch.zeros(4, 2), torch.arange(4).view(4, 1).float())
+    batch = pool.sample(2, torch.Generator().manual_seed(3), "cuda")
+    reseed = torch.tensor([0], device="cuda")
+
+    selected = batch.indices[reseed]
+    pool.replace_entries(
+        selected,
+        states=torch.ones(1, 2, device="cuda"),
+        genomes=torch.full((1, 1), 9.0, device="cuda"),
+    )
+    pool.commit(batch, batch.states + 2, 3)
+
+    assert batch.indices.device.type == "cuda"
+    assert pool.states.device.type == "cpu"
