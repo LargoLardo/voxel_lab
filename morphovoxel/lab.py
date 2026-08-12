@@ -24,7 +24,7 @@ from .seeding import seed_state
 from .state import StateLayout
 from .targets import make_target_2d, make_target_3d, make_tree_target
 from .targets.targets_2d import TARGETS_2D
-from .validation import ValidationCriteria, ValidationReport, build_candidate_panel, validate_panel
+from .validation import ValidationCriteria, ValidationReport, build_candidate_panel, build_validation_panel, validate_panel
 
 
 def list_checkpoints(run: Path) -> list[Path]:
@@ -315,20 +315,40 @@ class LabSession:
         steps: int = 512,
         recovery_steps: int = 128,
         fire_seeds: tuple[int, ...] = (0, 1, 2),
+        scope: str = "specimen",
     ) -> dict[str, object]:
         if self.model_kind not in {"tree_family", "tree_specialist"}:
             raise ValueError("tree validation requires a specialist or tree-family checkpoint")
         genome = self.pending_tree_genome or self.active_tree_genome
         if genome is None:
             raise ValueError("tree validation requires a tree genome")
+        if scope not in {"specimen", "family"}:
+            raise ValueError("validation scope must be specimen or family")
+        if scope == "family" and self.model_kind != "tree_family":
+            raise ValueError("family-panel validation requires a tree-family checkpoint")
         environment = self.environment_spec or EnvironmentSpec()
-        environments = (environment,) if environment == EnvironmentSpec() else (environment, EnvironmentSpec())
-        panel = build_candidate_panel(
-            genome,
-            seed=int(self.config.get("validation_seed", int(self.config.get("seed", 0)) + 100_000)),
-            fire_seeds=fire_seeds,
-            environments=environments,
-        )
+        seed = int(self.config.get("validation_seed", int(self.config.get("seed", 0)) + 100_000))
+        if scope == "family":
+            configured_environments = self.config.get("validation_environment_specs")
+            environments = (
+                tuple(EnvironmentSpec.from_dict(value) for value in configured_environments)
+                if configured_environments else None
+            )
+            if not getattr(self.model, "context_channels", 0):
+                environments = (EnvironmentSpec(),)
+            panel = build_validation_panel(
+                seed=seed,
+                boundary_genes=self.config.get("validation_boundary_genes", ["height", "canopy_spread"]),
+                random_count=int(self.config.get("validation_random_count", 4)),
+                interpolation_steps=int(self.config.get("validation_interpolation_steps", 3)),
+                mutation_count=int(self.config.get("validation_mutation_count", 4)),
+                mutation_strength=float(self.config.get("validation_mutation_strength", 0.15)),
+                fire_seeds=fire_seeds,
+                environments=environments,
+            )
+        else:
+            environments = (environment,) if environment == EnvironmentSpec() else (environment, EnvironmentSpec())
+            panel = build_candidate_panel(genome, seed=seed, fire_seeds=fire_seeds, environments=environments)
         model = copy.deepcopy(self.model).eval()
         report = validate_panel(
             model,
@@ -351,6 +371,7 @@ class LabSession:
             "checkpoint": self.checkpoint_name,
             "checkpoint_sha256": self.checkpoint_sha256,
             "model_kind": self.model_kind,
+            "scope": scope,
             "genome": genome.to_dict(),
             "environment": environment.to_dict(),
             "report": report.to_dict(),

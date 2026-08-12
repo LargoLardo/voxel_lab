@@ -42,4 +42,20 @@ def test_tree_presets_form_a_parseable_checkpoint_pipeline():
         EnvironmentSpec.from_dict(value)
         for value in configs["tree_environment.yaml"]["validation_environment_specs"]
     )
+    regeneration = configs["tree_regeneration.yaml"]
+    assert regeneration["iterations"] == 8000
+    assert regeneration["pool_size"] == 128
+    assert regeneration["persistence_steps"] == [32, 96]
+    assert regeneration["persistence_weight"] == 2.0
+    assert regeneration["validation_steps"] == 512
+    assert regeneration["validation_recovery_steps"] == 128
+    assert regeneration["loss_weights"]["occupancy_range"] == 2.0
+    assert regeneration["loss_weights"]["magnitude"] == 0.01
+
+    environment = configs["tree_environment.yaml"]
+    assert environment["damage_probability"] == 0.35
+    assert environment["damage_min_age"] == 64
+    assert environment["persistence_steps"] == [32, 96]
+    assert environment["validation_steps"] == 512
+    assert environment["validation_recovery_steps"] == 128
     assert "checkpoint" not in configs["smoke_tree_ecology.yaml"]

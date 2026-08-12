@@ -12,19 +12,20 @@ materials: 4
 hidden_channels: 8
 model_width: 64
 fire_rate: 0.5
-iterations: 4000
-rollout_steps: [16, 40]
-pool_size: 64
+iterations: 8000
+rollout_steps: [24, 64]
+pool_size: 128
 fresh_fraction: 0.25
 damage_probability: 0.5
 damage_types: [sphere, cuboid, top]
 damage_severities: [0.1, 0.25, 0.5]
-damage_min_age: 48
-learning_rate: 0.001
+damage_min_age: 64
+learning_rate: 0.0003
+gradient_clip: 1.0
 state_limit: 4.0
-loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 1.0, magnitude: 0.001}
-persistence_steps: [16, 40]
-persistence_weight: 1.0
+loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 2.0, magnitude: 0.01}
+persistence_steps: [32, 96]
+persistence_weight: 2.0
 initial_genome_span: 1.0
 genome_widen_fraction: 0.01
 interpolation_start_fraction: 0.0
@@ -33,16 +34,16 @@ mutation_start_fraction: 0.0
 mutation_fraction: 0.25
 mutation_strength: 0.15
 environment_start_fraction: 1.0
-validation_steps: 256
+validation_steps: 512
 validation_every: 250
-validation_fire_seeds: [100142, 100143]
-validation_random_count: 2
-validation_interpolation_steps: 2
-validation_mutation_count: 2
+validation_fire_seeds: [100142, 100143, 100144, 100145]
+validation_random_count: 4
+validation_interpolation_steps: 3
+validation_mutation_count: 4
 validation_mutation_strength: 0.15
-validation_min_steps: 256
-validation_recovery_steps: 64
-validation_min_recovery_steps: 64
+validation_min_steps: 512
+validation_recovery_steps: 128
+validation_min_recovery_steps: 128
 validation_aggregation: worst
 archive_min_validation_steps: 512
 archive_min_recovery_steps: 128

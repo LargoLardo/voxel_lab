@@ -399,7 +399,8 @@ def validate_candidate(
             mature, _ = rollout(model, state, mature_steps, genome, context=context)
             final, _ = rollout(model, mature, late_steps, genome, context=context) if bool(torch.isfinite(mature).all()) else (mature, [])
             if bool(torch.isfinite(final).all()):
-                damaged, removed = damage_3d(final, 0.25, "sphere", case.fire_seed)
+                damage_kinds = ("sphere", "cuboid", "top", "dropout")
+                damaged, removed = damage_3d(final, 0.25, damage_kinds[case.fire_seed % len(damage_kinds)], case.fire_seed)
                 recovered, _ = rollout(model, damaged, recovery_steps, genome, context=context)
             else:
                 damaged = recovered = final
