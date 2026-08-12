@@ -37,6 +37,20 @@ def test_resume_rng_state_continues_python_numpy_and_torch_streams():
     assert (random.random(), float(np.random.random()), float(torch.rand(()))) == expected
 
 
+def test_resume_rng_state_normalizes_cuda_bytes_to_cpu(monkeypatch):
+    restored = []
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    monkeypatch.setattr(torch.cuda, "set_rng_state_all", lambda states: restored.extend(states))
+
+    _restore_rng_state({"cuda": [np.arange(8, dtype=np.int64)]})
+
+    assert len(restored) == 1
+    assert restored[0].device.type == "cpu"
+    assert restored[0].dtype == torch.uint8
+    assert restored[0].tolist() == list(range(8))
+
+
 def test_pool_actions_reseed_worst_and_damage_low_loss_mature_samples():
     state = torch.tensor([4.0, 3.0, 2.0, 1.0]).view(4, 1, 1, 1, 1)
     target = torch.zeros(4, 1, 1, 1)

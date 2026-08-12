@@ -34,6 +34,12 @@ from .state_pool import StatePool
 LOGGER = logging.getLogger(__name__)
 
 
+def _rng_byte_tensor(value) -> torch.Tensor:
+    if isinstance(value, torch.Tensor):
+        return value.detach().to(device="cpu", dtype=torch.uint8).contiguous()
+    return torch.as_tensor(value, dtype=torch.uint8, device="cpu").contiguous()
+
+
 def _restore_rng_state(payload: dict | None) -> None:
     """Continue the exact stochastic streams stored by a true resume."""
     if not isinstance(payload, dict):
@@ -43,12 +49,12 @@ def _restore_rng_state(payload: dict | None) -> None:
     if payload.get("numpy") is not None:
         np.random.set_state(payload["numpy"])
     if payload.get("torch") is not None:
-        torch.set_rng_state(payload["torch"].cpu())
+        torch.set_rng_state(_rng_byte_tensor(payload["torch"]))
     cuda_states = payload.get("cuda")
     if cuda_states is not None and torch.cuda.is_available():
         if len(cuda_states) != torch.cuda.device_count():
             raise ValueError("checkpoint CUDA RNG state count does not match available CUDA devices")
-        torch.cuda.set_rng_state_all(cuda_states)
+        torch.cuda.set_rng_state_all([_rng_byte_tensor(state) for state in cuda_states])
 
 
 def _targets(dimensions: int, labels: torch.Tensor, size: int, seed: int, conditional: bool, device, target_kind: str | None = None):

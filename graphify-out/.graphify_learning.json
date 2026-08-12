@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-12T03:06:05.990381+00:00",
+  "generated_at": "2026-08-12T21:16:25.114540+00:00",
   "nodes": {
     "configs_full_experiment_full_pipeline": {
       "code_fingerprint": "3787c0f319cadd2a9306fa53d8e60f7c266576fa2755c57bc603261031515f9f",
@@ -22,7 +22,7 @@
           "q": "also please explain how the regeneration works, what are each of the three options. Also explain the genome lab, ecology and their options, and how they differ from the plain 2d and 3d voxel options. also make it so the smoke tests are the last options and the full runs are default"
         }
       ],
-      "score": 2.886637283,
+      "score": 2.836576906,
       "source_file": "configs/full_experiment.yaml",
       "status": "preferred",
       "uses": 3
@@ -43,7 +43,7 @@
           "q": "how does genome training work"
         }
       ],
-      "score": 1.911607005,
+      "score": 1.878455708,
       "source_file": "configs/phase3_conditional.yaml",
       "status": "preferred",
       "uses": 2
@@ -59,7 +59,7 @@
           "q": "why does the organism keep destabilizing after a while when i run it on genome or regeneration and i test it, theres no persistence. https://distill.pub/2020/growing-ca/ use this as a source if helpful"
         }
       ],
-      "score": 0.955915623,
+      "score": 0.93933803,
       "source_file": "configs/phase4_regeneration_training.yaml",
       "status": "tentative",
       "uses": 1
@@ -95,7 +95,7 @@
           "q": "Audit current repository for ecology routing, environment inputs, configs, checkpoint compatibility, docs, CUDA verification, and tests."
         }
       ],
-      "score": 5.78198978,
+      "score": 5.681717886,
       "source_file": "morphovoxel/checkpointing.py",
       "status": "preferred",
       "uses": 6
@@ -116,7 +116,7 @@
           "q": "is  it possible to interact with each of  the completed runs in a design lab, such as placing a seed down with double click and then watching how the run's result would grow it accordingly and erasing parts using the mouse to see growth/regeneration. something similar to [https://distill.pub/2020/growing-ca/](https://distill.pub/2020/growing-ca/)"
         }
       ],
-      "score": 1.872260461,
+      "score": 1.839791517,
       "source_file": "morphovoxel/checkpointing.py",
       "status": "preferred",
       "uses": 2
@@ -137,7 +137,7 @@
           "q": "Remove the clamped-loss blind spot and penalize raw occupancy outside [0,1]; add a magnitude penalty over occupancy, material, and hidden channels; clear dead-cell state after every update using the Distill living-mask method; train genome models from a state pool; compare continued states with targets over longer randomized horizons; damage mature low-loss regeneration samples and reseed the worst samples; validate every genome for 256+ steps and save the checkpoint with the best worst-genome persistence score; assess GPU feasibility and advise genomes versus separate models for mixed-organism environments."
         }
       ],
-      "score": 1.933837778,
+      "score": 1.900300953,
       "source_file": "morphovoxel/checkpointing.py",
       "status": "preferred",
       "uses": 2
@@ -153,7 +153,7 @@
           "q": "is  it possible to interact with each of  the completed runs in a design lab, such as placing a seed down with double click and then watching how the run's result would grow it accordingly and erasing parts using the mouse to see growth/regeneration. something similar to [https://distill.pub/2020/growing-ca/](https://distill.pub/2020/growing-ca/)"
         }
       ],
-      "score": 0.894873513,
+      "score": 0.879354519,
       "source_file": "morphovoxel/damage/operators_2d.py",
       "status": "tentative",
       "uses": 1
@@ -174,7 +174,7 @@
           "q": "is  it possible to interact with each of  the completed runs in a design lab, such as placing a seed down with double click and then watching how the run's result would grow it accordingly and erasing parts using the mouse to see growth/regeneration. something similar to [https://distill.pub/2020/growing-ca/](https://distill.pub/2020/growing-ca/)"
         }
       ],
-      "score": 1.872420879,
+      "score": 1.839949153,
       "source_file": "morphovoxel/damage/operators_3d.py",
       "status": "preferred",
       "uses": 2
@@ -195,7 +195,7 @@
           "q": "Audit current repository for ecology routing, environment inputs, configs, checkpoint compatibility, docs, CUDA verification, and tests."
         }
       ],
-      "score": 1.954482671,
+      "score": 1.920587821,
       "source_file": "morphovoxel/ecology/environment.py",
       "status": "preferred",
       "uses": 2
@@ -231,7 +231,7 @@
           "q": "If I create a specialist tree, can it vary into multiple tree types randomly or from environmental conditions, support meaningful genome interpolation or mutation, and generate entirely new stable tree variants? How would I do it?"
         }
       ],
-      "score": 4.845023646,
+      "score": 4.76100072,
       "source_file": "morphovoxel/ecology/simulator.py",
       "status": "preferred",
       "uses": 5
@@ -257,7 +257,7 @@
           "q": "please show how many steps are occuring per second, as well as an easier ui with sliders to adjust configs hi"
         }
       ],
-      "score": 2.803596828,
+      "score": 2.754976547,
       "source_file": "morphovoxel/evaluate_regeneration.py",
       "status": "preferred",
       "uses": 3
@@ -273,7 +273,7 @@
           "q": "what does model became non finite mean, also how long would you suggest i run regeneration to obtain a stable model, also add an option to view the targets for each run, including a 3d viewer for the 3d runs"
         }
       ],
-      "score": 0.955420282,
+      "score": 0.93885128,
       "source_file": "morphovoxel/evaluate_regeneration.py",
       "status": "tentative",
       "uses": 1
@@ -294,7 +294,7 @@
           "q": "If I create a specialist tree, can it vary into multiple tree types randomly or from environmental conditions, support meaningful genome interpolation or mutation, and generate entirely new stable tree variants? How would I do it?"
         }
       ],
-      "score": 1.934399012,
+      "score": 1.900852455,
       "source_file": "morphovoxel/genomes.py",
       "status": "preferred",
       "uses": 2
@@ -320,7 +320,7 @@
           "q": "how does genome training work"
         }
       ],
-      "score": 2.869291986,
+      "score": 2.819532413,
       "source_file": "morphovoxel/genomes.py",
       "status": "preferred",
       "uses": 3
@@ -357,7 +357,7 @@
           "q": "what does model became non finite mean, also how long would you suggest i run regeneration to obtain a stable model, also add an option to view the targets for each run, including a 3d viewer for the 3d runs"
         }
       ],
-      "score": 8.538692075,
+      "score": 8.39061315,
       "source_file": "morphovoxel/lab.py",
       "status": "contested",
       "uses": 10,
@@ -374,7 +374,7 @@
           "q": "change the step speed slider so that it scales the number of steps a second it takes in the simulation/viewer. with the slowest being 1/60x the default, 1x being the default, and 5x being the max speed the device allows for steps/sec, with adequate scaling settings in between"
         }
       ],
-      "score": 0.954472382,
+      "score": 0.937919819,
       "source_file": "morphovoxel/lab.py",
       "status": "tentative",
       "uses": 1
@@ -396,7 +396,7 @@
           "q": "change the orientation of the checkpoint viewer so that it actually lines up with the 2d perspectives. right now top 2d perspective corresponds to the side of the 3d voxel model"
         }
       ],
-      "score": -0.000385838,
+      "score": -0.000379147,
       "source_file": "morphovoxel/lab.py",
       "status": "contested",
       "uses": 1,
@@ -423,7 +423,7 @@
           "q": "change the orientation of the checkpoint viewer so that it actually lines up with the 2d perspectives. right now top 2d perspective corresponds to the side of the 3d voxel model"
         }
       ],
-      "score": 2.887061346,
+      "score": 2.836993615,
       "source_file": "morphovoxel/lab.py",
       "status": "preferred",
       "uses": 3
@@ -444,7 +444,7 @@
           "q": "please explain the purpose of this experiment and how each part relates to the other, as well as each parts significance"
         }
       ],
-      "score": 1.932208302,
+      "score": 1.898699736,
       "source_file": "morphovoxel/metrics.py",
       "status": "preferred",
       "uses": 2
@@ -465,7 +465,7 @@
           "q": "Review the smallest robust interactive checkpoint-backed Design Lab implementation"
         }
       ],
-      "score": 1.790580336,
+      "score": 1.759527897,
       "source_file": "morphovoxel/model_2d.py",
       "status": "preferred",
       "uses": 2
@@ -501,7 +501,7 @@
           "q": "Write a Goal Mode prompt to pivot MorphoVoxel into a continuous-genome tree organism workbench, potentially revamping the project and Genome Lab while retaining specialist-model options."
         }
       ],
-      "score": 10.479258871,
+      "score": 10.297526426,
       "source_file": "morphovoxel/model_3d.py",
       "status": "preferred",
       "uses": 11
@@ -517,7 +517,7 @@
           "q": "How does the dashboard select CPU or CUDA and display live cellular automaton frames?"
         }
       ],
-      "score": 0.894169694,
+      "score": 0.878662906,
       "source_file": "morphovoxel/random_utils.py",
       "status": "tentative",
       "uses": 1
@@ -533,7 +533,7 @@
           "q": "Implement the Goal Mode persistence validator and Variant Archive as focused modules and tests"
         }
       ],
-      "score": 0.977547366,
+      "score": 0.960594634,
       "source_file": "morphovoxel/rendering_3d.py",
       "status": "tentative",
       "uses": 1
@@ -555,7 +555,7 @@
           "q": "change the orientation of the checkpoint viewer so that it actually lines up with the 2d perspectives. right now top 2d perspective corresponds to the side of the 3d voxel model"
         }
       ],
-      "score": -0.000385838,
+      "score": -0.000379147,
       "source_file": "morphovoxel/rendering_3d.py",
       "status": "contested",
       "uses": 1,
@@ -587,7 +587,7 @@
           "q": "How does the dashboard select CPU or CUDA and display live cellular automaton frames?"
         }
       ],
-      "score": 3.661239635,
+      "score": 3.59774602,
       "source_file": "morphovoxel/rollout.py",
       "status": "preferred",
       "uses": 4
@@ -623,7 +623,7 @@
           "q": "also please explain how the regeneration works, what are each of the three options. Also explain the genome lab, ecology and their options, and how they differ from the plain 2d and 3d voxel options. also make it so the smoke tests are the last options and the full runs are default"
         }
       ],
-      "score": 7.522925589,
+      "score": 7.392462196,
       "source_file": "morphovoxel/run_ecology.py",
       "status": "preferred",
       "uses": 8
@@ -644,7 +644,7 @@
           "q": "is  it possible to interact with each of  the completed runs in a design lab, such as placing a seed down with double click and then watching how the run's result would grow it accordingly and erasing parts using the mouse to see growth/regeneration. something similar to [https://distill.pub/2020/growing-ca/](https://distill.pub/2020/growing-ca/)"
         }
       ],
-      "score": 1.790109106,
+      "score": 1.75906484,
       "source_file": "morphovoxel/seeding.py",
       "status": "preferred",
       "uses": 2
@@ -665,7 +665,7 @@
           "q": "make an option to display the 3d voxel runs in the design lab as an actual 3d depiction with 3d cubes/voxel representations instead of 2d perspectives."
         }
       ],
-      "score": 1.927373675,
+      "score": 1.893948951,
       "source_file": "morphovoxel/state.py",
       "status": "preferred",
       "uses": 2
@@ -691,7 +691,7 @@
           "q": "If I create a specialist tree, can it vary into multiple tree types randomly or from environmental conditions, support meaningful genome interpolation or mutation, and generate entirely new stable tree variants? How would I do it?"
         }
       ],
-      "score": 2.890540975,
+      "score": 2.8404129,
       "source_file": "morphovoxel/targets/targets_3d.py",
       "status": "preferred",
       "uses": 3
@@ -712,7 +712,7 @@
           "q": "how does genome training work"
         }
       ],
-      "score": 1.912142211,
+      "score": 1.878981633,
       "source_file": "morphovoxel/training/losses.py",
       "status": "preferred",
       "uses": 2
@@ -733,7 +733,7 @@
           "q": "what does model became non finite mean, also how long would you suggest i run regeneration to obtain a stable model, also add an option to view the targets for each run, including a 3d viewer for the 3d runs"
         }
       ],
-      "score": 1.911335905,
+      "score": 1.878189311,
       "source_file": "morphovoxel/training/losses.py",
       "status": "preferred",
       "uses": 2
@@ -769,7 +769,7 @@
           "q": "Remove the clamped-loss blind spot and penalize raw occupancy outside [0,1]; add a magnitude penalty over occupancy, material, and hidden channels; clear dead-cell state after every update using the Distill living-mask method; train genome models from a state pool; compare continued states with targets over longer randomized horizons; damage mature low-loss regeneration samples and reseed the worst samples; validate every genome for 256+ steps and save the checkpoint with the best worst-genome persistence score; assess GPU feasibility and advise genomes versus separate models for mixed-organism environments."
         }
       ],
-      "score": 6.73525788,
+      "score": 6.618454306,
       "source_file": "morphovoxel/training/state_pool.py",
       "status": "preferred",
       "uses": 7
@@ -790,7 +790,7 @@
           "q": "how can i run see and interact with the environments"
         }
       ],
-      "score": 1.787156573,
+      "score": 1.75616351,
       "source_file": "morphovoxel/training/trainer.py",
       "status": "preferred",
       "uses": 2
@@ -826,17 +826,22 @@
           "q": "what does model became non finite mean, also how long would you suggest i run regeneration to obtain a stable model, also add an option to view the targets for each run, including a 3d viewer for the 3d runs"
         }
       ],
-      "score": 9.372588603,
+      "score": 9.210048154,
       "source_file": "morphovoxel/training/trainer.py",
       "status": "preferred",
       "uses": 10
     },
     "morphovoxel_ui": {
-      "code_fingerprint": "4b995d23128d2521bd411c122d399a2521e318209417c64d751090d58d0ce4f9",
+      "code_fingerprint": "9cb459cd0481844069772a9a4315a4dab58671854609c0bad6c908661c247ef6",
       "label": "ui.py",
-      "last": "2026-08-11T03:51:33.263426+00:00",
+      "last": "2026-08-12T03:12:47.018399+00:00",
       "neg": 1,
       "provenance": [
+        {
+          "date": "2026-08-12T03:12:47.018399+00:00",
+          "outcome": "useful",
+          "q": "allow the user to delete previous checkpoints from the ui, remove Initialize from specialist checkpoint from specialist tab"
+        },
         {
           "date": "2026-08-11T03:51:33.263426+00:00",
           "outcome": "useful",
@@ -856,24 +861,24 @@
           "date": "2026-08-10T02:41:59.720597+00:00",
           "outcome": "useful",
           "q": "change the step speed slider so that it scales the number of steps a second it takes in the simulation/viewer. with the slowest being 1/60x the default, 1x being the default, and 5x being the max speed the device allows for steps/sec, with adequate scaling settings in between"
-        },
-        {
-          "date": "2026-08-07T07:43:32.718576+00:00",
-          "outcome": "useful",
-          "q": "is  it possible to interact with each of  the completed runs in a design lab, such as placing a seed down with double click and then watching how the run's result would grow it accordingly and erasing parts using the mouse to see growth/regeneration. something similar to [https://distill.pub/2020/growing-ca/](https://distill.pub/2020/growing-ca/)"
         }
       ],
-      "score": 2.826832949,
+      "score": 3.760572985,
       "source_file": "morphovoxel/ui.py",
       "status": "contested",
-      "uses": 4,
+      "uses": 5,
       "verdict": "useful"
     },
     "morphovoxel_ui_dashboardhandler": {
-      "code_fingerprint": "4b995d23128d2521bd411c122d399a2521e318209417c64d751090d58d0ce4f9",
+      "code_fingerprint": "9cb459cd0481844069772a9a4315a4dab58671854609c0bad6c908661c247ef6",
       "label": "DashboardHandler",
-      "last": "2026-08-11T03:51:33.263426+00:00",
+      "last": "2026-08-12T03:12:47.018399+00:00",
       "provenance": [
+        {
+          "date": "2026-08-12T03:12:47.018399+00:00",
+          "outcome": "useful",
+          "q": "allow the user to delete previous checkpoints from the ui, remove Initialize from specialist checkpoint from specialist tab"
+        },
         {
           "date": "2026-08-11T03:51:33.263426+00:00",
           "outcome": "useful",
@@ -893,20 +898,15 @@
           "date": "2026-08-11T02:52:05.524468+00:00",
           "outcome": "useful",
           "q": "Implement the Goal Mode pivot to a continuous-genome 3D tree-family organism workbench"
-        },
-        {
-          "date": "2026-08-10T05:19:43.905020+00:00",
-          "outcome": "useful",
-          "q": "Write a Goal Mode prompt to pivot MorphoVoxel into a continuous-genome tree organism workbench, potentially revamping the project and Genome Lab while retaining specialist-model options."
         }
       ],
-      "score": 12.247677065,
+      "score": 13.018039799,
       "source_file": "morphovoxel/ui.py",
       "status": "preferred",
-      "uses": 13
+      "uses": 14
     },
     "morphovoxel_ui_dashboardhandler_do_post": {
-      "code_fingerprint": "4b995d23128d2521bd411c122d399a2521e318209417c64d751090d58d0ce4f9",
+      "code_fingerprint": "9cb459cd0481844069772a9a4315a4dab58671854609c0bad6c908661c247ef6",
       "label": ".do_POST()",
       "last": "2026-08-07T08:40:24.616428+00:00",
       "provenance": [
@@ -916,13 +916,13 @@
           "q": "Review the invalid request token bug and recommend the smallest secure restart-safe POST retry fix."
         }
       ],
-      "score": 0.89569037,
+      "score": 0.880157211,
       "source_file": "morphovoxel/ui.py",
       "status": "tentative",
       "uses": 1
     },
     "morphovoxel_ui_dashboardhandler_payload": {
-      "code_fingerprint": "4b995d23128d2521bd411c122d399a2521e318209417c64d751090d58d0ce4f9",
+      "code_fingerprint": "9cb459cd0481844069772a9a4315a4dab58671854609c0bad6c908661c247ef6",
       "label": "._payload()",
       "last": "2026-08-07T08:40:24.616428+00:00",
       "provenance": [
@@ -932,13 +932,13 @@
           "q": "Review the invalid request token bug and recommend the smallest secure restart-safe POST retry fix."
         }
       ],
-      "score": 0.89569037,
+      "score": 0.880157211,
       "source_file": "morphovoxel/ui.py",
       "status": "tentative",
       "uses": 1
     },
     "morphovoxel_ui_dashboardserver": {
-      "code_fingerprint": "4b995d23128d2521bd411c122d399a2521e318209417c64d751090d58d0ce4f9",
+      "code_fingerprint": "9cb459cd0481844069772a9a4315a4dab58671854609c0bad6c908661c247ef6",
       "label": "DashboardServer",
       "last": "2026-08-10T03:13:20.933121+00:00",
       "neg": 1,
@@ -969,14 +969,14 @@
           "q": "Inspect existing tests and add the smallest regression test for stale dashboard tokens after server restart."
         }
       ],
-      "score": 3.576905718,
+      "score": 3.514874631,
       "source_file": "morphovoxel/ui.py",
       "status": "contested",
       "uses": 5,
       "verdict": "useful"
     },
     "morphovoxel_ui_invalidrequesttoken": {
-      "code_fingerprint": "4b995d23128d2521bd411c122d399a2521e318209417c64d751090d58d0ce4f9",
+      "code_fingerprint": "9cb459cd0481844069772a9a4315a4dab58671854609c0bad6c908661c247ef6",
       "label": "InvalidRequestToken",
       "last": "2026-08-07T08:41:59.866045+00:00",
       "provenance": [
@@ -986,13 +986,13 @@
           "q": "its erroring and saying: invalid request token; it does not let me place a seed nor play anything"
         }
       ],
-      "score": 0.895713185,
+      "score": 0.88017963,
       "source_file": "morphovoxel/ui.py",
       "status": "tentative",
       "uses": 1
     },
     "morphovoxel_ui_job_view": {
-      "code_fingerprint": "4b995d23128d2521bd411c122d399a2521e318209417c64d751090d58d0ce4f9",
+      "code_fingerprint": "9cb459cd0481844069772a9a4315a4dab58671854609c0bad6c908661c247ef6",
       "label": "_job_view()",
       "last": "2026-08-07T07:27:54.672726+00:00",
       "provenance": [
@@ -1012,13 +1012,13 @@
           "q": "How does the dashboard select CPU or CUDA and display live cellular automaton frames?"
         }
       ],
-      "score": 2.683271612,
+      "score": 2.636738024,
       "source_file": "morphovoxel/ui.py",
       "status": "preferred",
       "uses": 3
     },
     "morphovoxel_ui_launch": {
-      "code_fingerprint": "4b995d23128d2521bd411c122d399a2521e318209417c64d751090d58d0ce4f9",
+      "code_fingerprint": "9cb459cd0481844069772a9a4315a4dab58671854609c0bad6c908661c247ef6",
       "label": "_launch()",
       "last": "2026-08-10T02:29:52.687690+00:00",
       "provenance": [
@@ -1033,7 +1033,7 @@
           "q": "How does the dashboard select CPU or CUDA and display live cellular automaton frames?"
         }
       ],
-      "score": 1.848456525,
+      "score": 1.816400391,
       "source_file": "morphovoxel/ui.py",
       "status": "preferred",
       "uses": 2
@@ -1049,7 +1049,7 @@
           "q": "change the step speed slider so that it scales the number of steps a second it takes in the simulation/viewer. with the slowest being 1/60x the default, 1x being the default, and 5x being the max speed the device allows for steps/sec, with adequate scaling settings in between"
         }
       ],
-      "score": 0.954472382,
+      "score": 0.937919819,
       "source_file": "morphovoxel/utils.py",
       "status": "tentative",
       "uses": 1
@@ -1075,7 +1075,7 @@
           "q": "How does the dashboard select CPU or CUDA and display live cellular automaton frames?"
         }
       ],
-      "score": 2.683271612,
+      "score": 2.636738024,
       "source_file": "morphovoxel/utils.py",
       "status": "preferred",
       "uses": 3
@@ -1091,13 +1091,13 @@
           "q": "how can i run see and interact with the environments"
         }
       ],
-      "score": 0.89346222,
+      "score": 0.877967702,
       "source_file": "morphovoxel/visualize.py",
       "status": "tentative",
       "uses": 1
     },
     "readme_fixed_local_perception": {
-      "code_fingerprint": "18dd16bfc07bf3bee1add18d86e6c241e308b53c616b4c192f6d9ba6086fc2f4",
+      "code_fingerprint": "606849516eb0fe92be8e518a30e35ee5616b4121d585fa74aa29245c45d69a4d",
       "label": "Fixed Local Perception Bank",
       "last": "2026-08-10T02:54:18.369302+00:00",
       "provenance": [
@@ -1107,13 +1107,13 @@
           "q": "please explain the purpose of this experiment and how each part relates to the other, as well as each parts significance"
         }
       ],
-      "score": 0.954660936,
+      "score": 0.938105102,
       "source_file": "README.md",
       "status": "tentative",
       "uses": 1
     },
     "readme_research_question": {
-      "code_fingerprint": "18dd16bfc07bf3bee1add18d86e6c241e308b53c616b4c192f6d9ba6086fc2f4",
+      "code_fingerprint": "606849516eb0fe92be8e518a30e35ee5616b4121d585fa74aa29245c45d69a4d",
       "label": "Genome-Conditioned Local Morphogenesis Research Question",
       "last": "2026-08-10T02:54:18.369302+00:00",
       "provenance": [
@@ -1123,13 +1123,13 @@
           "q": "please explain the purpose of this experiment and how each part relates to the other, as well as each parts significance"
         }
       ],
-      "score": 0.954660936,
+      "score": 0.938105102,
       "source_file": "README.md",
       "status": "tentative",
       "uses": 1
     },
     "readme_saved_state_visualization": {
-      "code_fingerprint": "18dd16bfc07bf3bee1add18d86e6c241e308b53c616b4c192f6d9ba6086fc2f4",
+      "code_fingerprint": "606849516eb0fe92be8e518a30e35ee5616b4121d585fa74aa29245c45d69a4d",
       "label": "Saved-State Visualization Without Retraining",
       "last": "2026-08-07T06:21:22.035803+00:00",
       "provenance": [
@@ -1139,13 +1139,13 @@
           "q": "please produce a ui that i can use to navigate through all of these"
         }
       ],
-      "score": 0.893694352,
+      "score": 0.878195808,
       "source_file": "README.md",
       "status": "tentative",
       "uses": 1
     },
     "readme_semantic_cell_state": {
-      "code_fingerprint": "18dd16bfc07bf3bee1add18d86e6c241e308b53c616b4c192f6d9ba6086fc2f4",
+      "code_fingerprint": "606849516eb0fe92be8e518a30e35ee5616b4121d585fa74aa29245c45d69a4d",
       "label": "Semantic Cell State",
       "last": "2026-08-10T02:54:18.369302+00:00",
       "provenance": [
@@ -1155,13 +1155,13 @@
           "q": "please explain the purpose of this experiment and how each part relates to the other, as well as each parts significance"
         }
       ],
-      "score": 0.954660936,
+      "score": 0.938105102,
       "source_file": "README.md",
       "status": "tentative",
       "uses": 1
     },
     "readme_shared_vs_specialized_comparison": {
-      "code_fingerprint": "18dd16bfc07bf3bee1add18d86e6c241e308b53c616b4c192f6d9ba6086fc2f4",
+      "code_fingerprint": "606849516eb0fe92be8e518a30e35ee5616b4121d585fa74aa29245c45d69a4d",
       "label": "Shared versus Specialized NCA Comparison",
       "last": "2026-08-11T02:59:28.564341+00:00",
       "provenance": [
@@ -1171,7 +1171,7 @@
           "q": "Audit current repository for ecology routing, environment inputs, configs, checkpoint compatibility, docs, CUDA verification, and tests."
         }
       ],
-      "score": 0.977056123,
+      "score": 0.960111909,
       "source_file": "README.md",
       "status": "tentative",
       "uses": 1
@@ -1187,7 +1187,7 @@
           "q": "If I create a specialist tree, can it vary into multiple tree types randomly or from environmental conditions, support meaningful genome interpolation or mutation, and generate entirely new stable tree variants? How would I do it?"
         }
       ],
-      "score": 0.956709496,
+      "score": 0.940118136,
       "source_file": "scripts/run_interpolation.py",
       "status": "tentative",
       "uses": 1
@@ -1203,7 +1203,7 @@
           "q": "Write a Goal Mode prompt to pivot MorphoVoxel into a continuous-genome tree organism workbench, potentially revamping the project and Genome Lab while retaining specialist-model options."
         }
       ],
-      "score": 0.956891109,
+      "score": 0.940296599,
       "source_file": "scripts/run_specialized_baseline.py",
       "status": "tentative",
       "uses": 1
@@ -1219,7 +1219,7 @@
           "q": "should these be commited? why do they have a dot in front of them? What are they used for"
         }
       ],
-      "score": 0.950105222,
+      "score": 0.933628394,
       "source_file": "tests/test_lab.py",
       "status": "tentative",
       "uses": 1
@@ -1240,16 +1240,21 @@
           "q": "Inspect existing tests and add the smallest regression test for stale dashboard tokens after server restart."
         }
       ],
-      "score": 1.872741854,
+      "score": 1.840264561,
       "source_file": "tests/test_lab.py",
       "status": "preferred",
       "uses": 2
     },
     "tests_test_ui": {
-      "code_fingerprint": "29230351c92cef8f0a313f83b2d4700832dfe44f1708053ed7914890c5d68c6f",
+      "code_fingerprint": "992805d1038b36b731736205d201ad1fe036abf6ee93205c44282bd243522267",
       "label": "test_ui.py",
-      "last": "2026-08-11T03:51:33.263426+00:00",
+      "last": "2026-08-12T03:12:47.018399+00:00",
       "provenance": [
+        {
+          "date": "2026-08-12T03:12:47.018399+00:00",
+          "outcome": "useful",
+          "q": "allow the user to delete previous checkpoints from the ui, remove Initialize from specialist checkpoint from specialist tab"
+        },
         {
           "date": "2026-08-11T03:51:33.263426+00:00",
           "outcome": "useful",
@@ -1261,10 +1266,10 @@
           "q": "should these be commited? why do they have a dot in front of them? What are they used for"
         }
       ],
-      "score": 1.927978114,
+      "score": 2.877306188,
       "source_file": "tests/test_ui.py",
       "status": "preferred",
-      "uses": 2
+      "uses": 3
     }
   },
   "version": 1
