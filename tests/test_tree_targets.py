@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from morphovoxel.environment import ENVIRONMENT_CHANNELS, EnvironmentSpec, make_environment_context
-from morphovoxel.genomes import TreeGenome
+from morphovoxel.genomes import TREE_FAMILIES, TreeGenome
 from morphovoxel.targets import make_tree_target
 
 
@@ -17,6 +17,30 @@ def test_tree_genomes_make_distinct_reproducible_semantic_targets():
     assert not np.array_equal(short_a[0], tall_target[0])
     assert short_a[0].sum() > 0 and tall_target[0].sum() > 0
     assert set(np.unique(tall_target[1])).issubset({0, 1, 2, 3})
+
+
+@pytest.mark.parametrize("size", (12, 16))
+@pytest.mark.parametrize("family", TREE_FAMILIES)
+def test_thinnest_tree_target_contains_its_planted_base(family, size):
+    genome = TreeGenome(family=family).with_values({"trunk_thickness": -1, "taper": 1})
+    occupancy, materials = make_tree_target(
+        genome,
+        size,
+        EnvironmentSpec(obstacle_density=0.3, neighbor_pressure=1, wind_strength=1, seed=91),
+    )
+    base_seed = (size - 3, size // 2, size // 2)
+    assert occupancy[base_seed] == 1
+    assert materials[base_seed] == 1
+
+
+def test_random_tree_targets_never_lose_their_planted_base():
+    size = 16
+    base_seed = (size - 3, size // 2, size // 2)
+    for seed in range(256):
+        family = TREE_FAMILIES[seed % len(TREE_FAMILIES)]
+        genome = TreeGenome.random(seed, family=family)
+        occupancy, _ = make_tree_target(genome, size, EnvironmentSpec.random(seed + 10_000))
+        assert occupancy[base_seed] == 1, (seed, genome)
 
 
 def test_tree_targets_respond_to_environment_without_changing_genome():

@@ -14,7 +14,7 @@ import torch
 from ..checkpointing import CHECKPOINT_FORMAT_VERSION, convert_specialist_to_family, load_checkpoint, save_checkpoint
 from ..config import save_config
 from ..environment import ENVIRONMENT_CHANNELS, ENVIRONMENT_SCHEMA_VERSION, EnvironmentSpec, environment_context_batch
-from ..genomes import MORPHOLOGIES, TREE_GENE_SPECS, TREE_GENOME_VERSION, TreeGenome, one_hot_genomes, tree_genome_from_vector, tree_genome_tensor
+from ..genomes import MORPHOLOGIES, TREE_FAMILIES, TREE_GENE_SPECS, TREE_GENOME_VERSION, TreeGenome, one_hot_genomes, tree_genome_tensor
 from ..metrics import morphology_metrics, threshold_iou
 from ..model_2d import NeuralCA2D
 from ..model_3d import NeuralCA3D
@@ -106,13 +106,20 @@ def _pool_actions(
     mature_age: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Choose the worst samples to reseed and the best mature samples to damage."""
+    living = state[:, 0].flatten(1).amax(1) > 0.1
+    valid_target = target.flatten(1).amax(1) > 0.5
     errors = torch.nan_to_num(
         (state[:, 0] - target).square().flatten(1).mean(1),
         nan=float("inf"), posinf=float("inf"), neginf=float("inf"),
     )
-    fresh_count = min(len(state), max(0, fresh_count))
+    invalid = ~living | ~valid_target
+    errors = errors.masked_fill(invalid, float("inf"))
+    # A dead NCA has no living cells from which to regrow and receives no
+    # useful gradient through the living mask, so it must be reseeded even if
+    # the configured routine fresh fraction would choose fewer samples.
+    fresh_count = min(len(state), max(0, fresh_count, int(invalid.sum())))
     reseed = torch.topk(errors, fresh_count).indices if fresh_count else torch.empty(0, dtype=torch.long, device=state.device)
-    eligible = ages >= mature_age
+    eligible = (ages >= mature_age) & living & valid_target
     if len(reseed):
         eligible[reseed] = False
     candidates = torch.nonzero(eligible, as_tuple=False).flatten()
@@ -121,6 +128,14 @@ def _pool_actions(
         damage_count = 1
     damage = candidates[torch.argsort(errors[candidates])[:damage_count]] if damage_count else torch.empty(0, dtype=torch.long, device=state.device)
     return reseed, damage
+
+
+def _keep_viable_damage(original: torch.Tensor, damaged: torch.Tensor) -> torch.Tensor:
+    """Do not turn a regenerating sample into an unrecoverable all-dead state."""
+    if original.shape != damaged.shape:
+        raise ValueError("original and damaged states must have the same shape")
+    living = damaged[:, 0].flatten(1).amax(1) > 0.1
+    return torch.where(living.view(-1, *([1] * (damaged.ndim - 1))), damaged, original)
 
 
 @torch.no_grad()
@@ -270,7 +285,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         "checkpoint_format_version": CHECKPOINT_FORMAT_VERSION,
         "genome_schema_version": TREE_GENOME_VERSION if tree_family or tree_specialist else (1 if conditional else 0),
         "environment_schema_version": ENVIRONMENT_SCHEMA_VERSION if tree_family or tree_specialist or context_channels else 0,
-        "target_generator_version": 1 if tree_family or tree_specialist else 0,
+        "target_generator_version": TREE_TARGET_VERSION if tree_family or tree_specialist else 0,
         "genome_size": genome_size,
         "context_channels": context_channels,
     })
@@ -330,7 +345,10 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         pool_states = seed_state(pool_size, size, layout, dimensions=dimensions, device="cpu")
         pool = StatePool(pool_states, pool_genomes)
     if restored and restored.get("pool"):
+        initialized_pool = pool
         pool = _restore_pool(restored["pool"])
+        if initialized_pool is not None and len(pool.states) < len(initialized_pool.states):
+            pool.append_from(initialized_pool, len(pool.states))
         if tree_family and any(getattr(pool, name) is None for name in (
             "target_occupancy", "target_materials", "environments",
             "environment_specs", "style_seeds",
@@ -379,13 +397,6 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 int(config.get("damage_min_age", maximum)),
             )
             if len(reseed):
-                parent = None
-                if tree_family:
-                    errors = (state[:, 0] - target).square().flatten(1).mean(1)
-                    parent_index = int(torch.nan_to_num(errors, nan=float("inf")).argmin())
-                    parent = tree_genome_from_vector(
-                        genomes[parent_index], int(pool_batch.style_seeds[parent_index]),
-                    )
                 fresh_states = seed_state(
                     len(reseed), size, layout, dimensions=dimensions,
                     seed_size=int(config.get("seed_size", 1)), noise=float(config.get("seed_noise", 0)),
@@ -395,6 +406,10 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 pool_batch.ages[reseed] = 0
                 if tree_family:
                     curriculum = curriculum_values(step - start, iterations, config)
+                    replacement_families = [
+                        TREE_FAMILIES[int(genomes[index, : len(TREE_FAMILIES)].argmax())]
+                        for index in reseed.tolist()
+                    ]
                     replacement = sample_family_data(
                         len(reseed), size, seed + 10_000 + step,
                         genome_span=curriculum["genome_span"],
@@ -402,7 +417,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                         mutation_fraction=curriculum["mutation_fraction"],
                         environment_span=curriculum["environment_span"] if context_channels else 0.0,
                         mutation_strength=float(config.get("mutation_strength", 0.15)),
-                        parent=parent, device=device,
+                        families=replacement_families,
+                        device=device,
                     )
                     genomes[reseed] = replacement.model_genomes
                     target[reseed] = replacement.target_occupancy
@@ -423,12 +439,14 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             if len(damage):
                 from ..damage import damage_3d
                 for index in damage.tolist():
-                    state[index : index + 1], _ = damage_3d(
-                        state[index : index + 1],
+                    original = state[index : index + 1]
+                    damaged, _ = damage_3d(
+                        original,
                         random.choice(config.get("damage_severities", [0.1, 0.25, 0.5])),
                         random.choice(config.get("damage_types", ["sphere", "cuboid", "top"])),
                         seed + step + index,
                     )
+                    state[index : index + 1] = _keep_viable_damage(original, damaged)
         else:
             state = seed_state(batch, size, layout, dimensions=dimensions, seed_size=int(config.get("seed_size", 1)), noise=float(config.get("seed_noise", 0)), random_seed=seed + step, device=device)
             if tree_family:
@@ -588,7 +606,10 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                     {"step": step + 1, "genome": name, "persistence_score": score, "worst_genome_persistence_score": worst_score}
                     for name, score in genome_scores.items()
                 )
-            if worst_score > best_score:
+            # Strict persistence criteria often tie at zero early in training.
+            # Keep the newest tied checkpoint instead of freezing best.pt at
+            # the first validation window.
+            if worst_score >= best_score:
                 best_score = worst_score
                 best_validation = {**last_validation, "best_worst_genome_persistence_score": best_score}
                 save_checkpoint(

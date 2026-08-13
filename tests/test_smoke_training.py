@@ -33,6 +33,17 @@ def test_cpu_smoke_training_continuous_tree_family(tmp_path):
     assert payload["pool"]["environments"].shape[1] == 12
     assert payload["pool"]["style_seeds"].shape[0] == config["pool_size"]
 
+    resumed = train(
+        {
+            **config, "run_name": "tree_family_resized", "pool_size": 6,
+            "resume": str(run / "checkpoints" / "latest.pt"),
+        },
+        dimensions=3,
+        conditional=True,
+    )
+    resized = torch.load(resumed / "checkpoints" / "latest.pt", map_location="cpu", weights_only=False)
+    assert all(len(value) == 6 for value in resized["pool"].values())
+
     broken = tmp_path / "missing-environment-specs.pt"
     payload["pool"].pop("environment_specs")
     torch.save(payload, broken)

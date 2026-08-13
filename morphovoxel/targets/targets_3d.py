@@ -9,7 +9,7 @@ from ..environment import ENVIRONMENT_CHANNELS, EnvironmentSpec, make_environmen
 from ..genomes import TreeGenome
 
 TARGETS_3D = ("branching", "conical", "radial", "mushroom", "dome")
-TREE_TARGET_VERSION = 1
+TREE_TARGET_VERSION = 2
 
 
 def _ball(mask: np.ndarray, z: float, y: float, x: float, radius: float) -> None:
@@ -109,7 +109,8 @@ def make_tree_target(
     branches = np.zeros_like(trunk)
     leaves = np.zeros_like(trunk)
     roots = np.zeros_like(trunk)
-    center = np.array((size - 3.0, (size - 1) / 2, (size - 1) / 2))
+    base_seed = (size - 3, size // 2, size // 2)
+    center = np.asarray(base_seed, dtype=np.float64)
 
     resource_scale = 0.72 + 0.14 * environment.water_level + 0.14 * environment.energy
     height = (
@@ -194,7 +195,7 @@ def make_tree_target(
     obstacles[max(0, int(center[0]) - 1) :, max(0, int(center[1]) - 1) : int(center[1]) + 2, max(0, int(center[2]) - 1) : int(center[2]) + 2] = False
     neighbors[max(0, int(center[0]) - 1) :, max(0, int(center[1]) - 1) : int(center[1]) + 2, max(0, int(center[2]) - 1) : int(center[2]) + 2] = False
     occupancy &= ~obstacles & ~neighbors
-    occupancy = _seed_component(occupancy, tuple(np.rint(center).astype(int)))
+    occupancy = _seed_component(occupancy, base_seed)
     trunk &= occupancy
     branches &= occupancy
     leaves &= occupancy

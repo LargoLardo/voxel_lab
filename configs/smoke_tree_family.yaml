@@ -15,5 +15,6 @@ fire_rate: 1.0
 iterations: 1
 rollout_steps: 1
 persistence_steps: 1
+environment_start_fraction: 1.0
 validation_steps: 0
 capture_every: 1

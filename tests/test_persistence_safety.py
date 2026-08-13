@@ -79,5 +79,17 @@ def test_magnitude_penalty_covers_occupancy_material_and_hidden_channels():
     assert components["magnitude"].item() == pytest.approx(3 / layout.channels)
 
 
+def test_sparse_foreground_is_not_diluted_by_empty_background():
+    layout = StateLayout(materials=2, hidden=1)
+    state = torch.zeros(1, layout.channels, 1, 100)
+    target = torch.zeros(1, 1, 100)
+    target[0, 0, 0] = 1
+    material = torch.zeros_like(target, dtype=torch.long)
+
+    _, components = morphology_loss(state, target, material, layout)
+
+    assert components["occupancy"].item() == pytest.approx(0.5)
+
+
 def test_stability_loss_does_not_hide_out_of_range_drift():
     assert stability_loss(torch.tensor([[[[2.0]]]]), torch.tensor([[[[3.0]]]])).item() == 1

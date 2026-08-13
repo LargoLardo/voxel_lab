@@ -5,7 +5,14 @@ import torch
 
 from morphovoxel.genomes import MORPHOLOGIES
 from morphovoxel.state import StateLayout
-from morphovoxel.training.trainer import _pool_actions, _restore_rng_state, _step_range, _validate_persistence, train
+from morphovoxel.training.trainer import (
+    _keep_viable_damage,
+    _pool_actions,
+    _restore_rng_state,
+    _step_range,
+    _validate_persistence,
+    train,
+)
 
 
 def test_step_range_rejects_negative_scalar():
@@ -53,13 +60,33 @@ def test_resume_rng_state_normalizes_cuda_bytes_to_cpu(monkeypatch):
 
 def test_pool_actions_reseed_worst_and_damage_low_loss_mature_samples():
     state = torch.tensor([4.0, 3.0, 2.0, 1.0]).view(4, 1, 1, 1, 1)
-    target = torch.zeros(4, 1, 1, 1)
+    target = torch.ones(4, 1, 1, 1)
     ages = torch.full((4,), 100)
 
     reseed, damage = _pool_actions(state, target, ages, fresh_count=1, damage_fraction=0.5, mature_age=48)
 
     assert reseed.tolist() == [0]
     assert damage.tolist() == [3, 2]
+
+
+def test_pool_actions_reseed_dead_samples_and_exclude_them_from_damage():
+    state = torch.tensor([0.0, 0.0, 0.8, 1.0]).view(4, 1, 1, 1, 1)
+    target = torch.ones(4, 1, 1, 1)
+    ages = torch.full((4,), 100)
+
+    reseed, damage = _pool_actions(state, target, ages, fresh_count=1, damage_fraction=1.0, mature_age=48)
+
+    assert set(reseed.tolist()) == {0, 1}
+    assert not set(reseed.tolist()) & set(damage.tolist())
+
+
+def test_lethal_damage_keeps_the_original_living_sample():
+    original = torch.zeros(1, 3, 5, 5, 5)
+    original[0, 0, 2, 2, 2] = 1
+
+    kept = _keep_viable_damage(original, torch.zeros_like(original))
+
+    assert torch.equal(kept, original)
 
 
 class _IdentityCA(torch.nn.Module):
@@ -93,7 +120,11 @@ def test_validation_rolls_every_genome_to_requested_horizon():
     assert worst == min(scores.values())
 
 
-def test_conditional_training_saves_scored_best_checkpoint(tmp_path):
+def test_conditional_training_updates_best_checkpoint_on_tied_scores(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "morphovoxel.training.trainer._validate_persistence",
+        lambda *args, **kwargs: (0.0, {name: 0.0 for name in MORPHOLOGIES}),
+    )
     run = train(
         {
             "run_name": "persistence",
@@ -106,7 +137,7 @@ def test_conditional_training_saves_scored_best_checkpoint(tmp_path):
             "hidden_channels": 2,
             "model_width": 4,
             "fire_rate": 1.0,
-            "iterations": 1,
+            "iterations": 2,
             "rollout_steps": [1, 1],
             "persistence_steps": [1, 1],
             "pool_size": 4,
@@ -120,6 +151,7 @@ def test_conditional_training_saves_scored_best_checkpoint(tmp_path):
     )
 
     checkpoint = torch.load(run / "checkpoints" / "best.pt", map_location="cpu", weights_only=False)
+    assert checkpoint["step"] == 2
     assert checkpoint["validation"]["validation_steps"] == 4
     assert set(checkpoint["validation"]["per_genome"]) == set(MORPHOLOGIES)
     assert len(checkpoint["pool"]["states"]) >= len(MORPHOLOGIES)

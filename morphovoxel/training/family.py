@@ -1,13 +1,14 @@
 """Continuous tree-family curriculum helpers."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
 import torch
 
 from ..environment import EnvironmentSpec, environment_context_batch
-from ..genomes import TREE_FAMILIES, TreeGenome, tree_genome_tensor
+from ..genomes import TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome, tree_genome_tensor
 from ..targets import make_tree_target
 
 
@@ -22,6 +23,17 @@ class FamilyData:
     environment_vectors: torch.Tensor
     style_seeds: torch.Tensor
     creation_methods: list[str]
+
+
+def _reflect_mutation(genome: TreeGenome, strength: float, seed: int) -> TreeGenome:
+    """Mutate without accumulating probability mass at clipped boundaries."""
+    rng = np.random.default_rng(seed)
+    genes = []
+    for spec, current in zip(TREE_GENE_SPECS, genome.genes):
+        width = spec.maximum - spec.minimum
+        offset = (current + float(rng.normal(0, strength)) - spec.minimum) % (2 * width)
+        genes.append(spec.minimum + (offset if offset <= width else 2 * width - offset))
+    return TreeGenome(genome.family, tuple(genes), genome.style_seed)
 
 
 def curriculum_values(step: int, iterations: int, config: dict) -> dict[str, float]:
@@ -55,6 +67,7 @@ def sample_family_data(
     environment_span: float = 0.0,
     mutation_strength: float = 0.15,
     parent: TreeGenome | None = None,
+    families: Sequence[str] | None = None,
     device: torch.device | str = "cpu",
 ) -> FamilyData:
     """Sample paired genomes, targets, environments, and exact style seeds."""
@@ -62,16 +75,26 @@ def sample_family_data(
         raise ValueError("family sample count must be positive")
     if interpolation_fraction + mutation_fraction > 1:
         raise ValueError("interpolation and mutation fractions cannot exceed one in total")
+    if families is not None and (len(families) != count or any(family not in TREE_FAMILIES for family in families)):
+        raise ValueError("families must provide one valid tree family per sample")
     rng = np.random.default_rng(seed)
     genomes: list[TreeGenome] = []
     environments: list[EnvironmentSpec] = []
     methods: list[str] = []
-    for _ in range(count):
+    family_order = list(rng.permutation(TREE_FAMILIES))
+    family_schedule = [str(family_order[index % len(TREE_FAMILIES)]) for index in range(count)]
+    rng.shuffle(family_schedule)
+    for index in range(count):
         sample_seed = int(rng.integers(0, 2**31))
         choice = float(rng.random())
-        family = parent.family if parent is not None and choice < interpolation_fraction + mutation_fraction else (
-            TREE_FAMILIES[0] if genome_span < 0.35 else TREE_FAMILIES[int(rng.integers(len(TREE_FAMILIES)))]
-        )
+        if families is not None:
+            family = families[index]
+        elif parent is None:
+            family = family_schedule[index]
+        elif choice < interpolation_fraction + mutation_fraction:
+            family = parent.family
+        else:
+            family = TREE_FAMILIES[int(rng.integers(len(TREE_FAMILIES)))]
         if choice < interpolation_fraction:
             left = parent or TreeGenome.random(int(rng.integers(0, 2**31)), family=family, span=genome_span)
             right = TreeGenome.random(int(rng.integers(0, 2**31)), family=family, span=genome_span)
@@ -79,7 +102,10 @@ def sample_family_data(
             methods.append("interpolation")
         elif choice < interpolation_fraction + mutation_fraction:
             base = parent or TreeGenome.random(int(rng.integers(0, 2**31)), family=family, span=genome_span)
-            genome = base.mutate(min(1.0, mutation_strength), sample_seed)
+            genome = (
+                _reflect_mutation(base, min(1.0, mutation_strength), sample_seed)
+                if parent is not None else base.mutate(min(1.0, mutation_strength), sample_seed)
+            )
             methods.append("mutation")
         else:
             genome = TreeGenome.random(sample_seed, family=family, span=genome_span)
@@ -87,7 +113,12 @@ def sample_family_data(
         environment = EnvironmentSpec.random(int(rng.integers(0, 2**31)), span=environment_span) if environment_span else EnvironmentSpec()
         genomes.append(genome)
         environments.append(environment)
-    occupancy, materials = zip(*(make_tree_target(genome, size, environment) for genome, environment in zip(genomes, environments)))
+    targets = [make_tree_target(genome, size, environment) for genome, environment in zip(genomes, environments)]
+    empty = [index for index, (occupancy, _) in enumerate(targets) if not np.asarray(occupancy).any()]
+    if empty:
+        indices = ", ".join(map(str, empty))
+        raise RuntimeError(f"tree target invariant violated: occupancy is empty for sample indices {indices}")
+    occupancy, materials = zip(*targets)
     return FamilyData(
         genomes=genomes,
         environment_specs=environments,

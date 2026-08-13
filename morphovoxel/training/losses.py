@@ -21,8 +21,15 @@ def morphology_loss(
     weights = weights or {}
     occupancy = state[:, layout.occupancy]
     target = occupancy_target.to(occupancy)
+    squared_error = (occupancy - target).square().flatten(1)
+    foreground = (target > 0.5).flatten(1)
+    background = ~foreground
+    foreground_error = (squared_error * foreground).sum(1) / foreground.sum(1).clamp_min(1)
+    background_error = (squared_error * background).sum(1) / background.sum(1).clamp_min(1)
     components = {
-        "occupancy": F.mse_loss(occupancy, target),
+        # Equal foreground/background weighting prevents sparse 3D trees from
+        # making an empty or averaged organism look deceptively inexpensive.
+        "occupancy": ((foreground_error + background_error) * 0.5).mean(),
         "leakage": (occupancy * (1 - target)).square().mean(),
         "occupancy_range": (F.relu(-occupancy).square() + F.relu(occupancy - 1).square()).mean(),
         "magnitude": F.relu(state.abs() - state_limit).square().mean(),

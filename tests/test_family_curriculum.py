@@ -1,8 +1,10 @@
+from collections import Counter
+
 import pytest
 import torch
 
 from morphovoxel.checkpointing import CheckpointCompatibilityError, save_checkpoint
-from morphovoxel.genomes import TreeGenome
+from morphovoxel.genomes import TREE_FAMILIES, TreeGenome
 from morphovoxel.model_3d import NeuralCA3D
 from morphovoxel.state import StateLayout
 from morphovoxel.training.family import curriculum_values, sample_family_data
@@ -28,6 +30,51 @@ def test_family_samples_keep_genome_target_environment_and_seed_paired():
     assert data.environments.shape[:2] == (4, 12)
     assert torch.equal(data.style_seeds, torch.tensor([genome.style_seed for genome in data.genomes]))
     assert set(data.creation_methods) <= {"interpolation", "mutation"}
+
+
+def test_initial_family_samples_are_balanced_at_narrow_span():
+    first = sample_family_data(
+        8, 16, 20, genome_span=0.01, interpolation_fraction=0, mutation_fraction=0,
+    )
+    second = sample_family_data(
+        8, 16, 20, genome_span=0.01, interpolation_fraction=0, mutation_fraction=0,
+    )
+    families = [genome.family for genome in first.genomes]
+    assert Counter(families) == {family: 2 for family in TREE_FAMILIES}
+    assert families == [genome.family for genome in second.genomes]
+
+    refreshed = sample_family_data(
+        16, 16, 21, genome_span=0.01, interpolation_fraction=0,
+        mutation_fraction=0, parent=TreeGenome(family="branching"),
+    )
+    assert {genome.family for genome in refreshed.genomes} == set(TREE_FAMILIES)
+
+
+def test_family_samples_have_nonempty_targets():
+    data = sample_family_data(
+        32, 16, 30, genome_span=1, interpolation_fraction=0.25,
+        mutation_fraction=0.25, environment_span=1,
+    )
+    occupied_cells = torch.count_nonzero(data.target_occupancy.flatten(1), dim=1)
+    assert bool((occupied_cells > 0).all())
+
+
+def test_family_replacements_can_preserve_pool_family_balance():
+    requested = list(TREE_FAMILIES)
+    data = sample_family_data(
+        len(requested), 16, 35, genome_span=1, interpolation_fraction=0.25,
+        mutation_fraction=0.25, families=requested,
+    )
+    assert [genome.family for genome in data.genomes] == requested
+
+
+def test_parent_mutations_reflect_instead_of_clipping_to_gene_limits():
+    parent = TreeGenome(family="branching", genes=(1.0,) * 10)
+    data = sample_family_data(
+        8, 16, 40, mutation_fraction=1, interpolation_fraction=0,
+        mutation_strength=1, parent=parent,
+    )
+    assert all(-1 < value < 1 for genome in data.genomes for value in genome.genes)
 
 
 def test_tree_family_training_can_initialize_from_specialist_checkpoint(tmp_path):

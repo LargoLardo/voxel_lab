@@ -29,7 +29,9 @@ interpolation_fraction: 0.25
 mutation_start_fraction: 0.45
 mutation_fraction: 0.25
 mutation_strength: 0.15
-environment_start_fraction: 0.65
+# Keep this stage focused on genome separation. Environmental variation is
+# introduced deliberately by tree_environment.yaml after regeneration.
+environment_start_fraction: 1.0
 validation_steps: 256
 validation_every: 250
 validation_fire_seeds: [100042, 100043]

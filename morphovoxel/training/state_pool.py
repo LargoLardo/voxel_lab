@@ -121,6 +121,22 @@ class StatePool:
                 getattr(self, name)[indices] = value.detach().cpu()
         self.ages[indices] = 0
 
+    def append_from(self, other: "StatePool", start: int) -> None:
+        """Append a paired suffix from another pool."""
+        names = (
+            "states", "genomes", "ages", "target_occupancy", "target_materials",
+            "environments", "environment_specs", "style_seeds",
+        )
+        if not 0 <= start <= len(other.states):
+            raise ValueError("pool append start is out of range")
+        for name in names:
+            if (getattr(self, name) is None) != (getattr(other, name) is None):
+                raise ValueError(f"cannot append pool with different {name} pairing")
+        for name in names:
+            current, incoming = getattr(self, name), getattr(other, name)
+            if current is not None:
+                setattr(self, name, torch.cat((current, incoming[start:].detach().cpu())))
+
     def state_dict(self) -> dict[str, torch.Tensor]:
         values = {
             "states": self.states,

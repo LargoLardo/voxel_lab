@@ -43,7 +43,7 @@ To run all five stages from scratch instead, use:
 The command runs these stages in order and stops on the first failure:
 
 1. `tree_specialist.yaml` learns one default branching tree.
-2. `tree_family.yaml` initializes from the specialist's `best.pt`, adds continuous genome and environment inputs without changing the copied behavior initially, then widens the genome curriculum.
+2. `tree_family.yaml` initializes from the specialist's `best.pt`, adds continuous genome and environment inputs without changing the copied behavior initially, then trains a balanced continuous-genome curriculum in one fixed environment.
 3. `tree_regeneration.yaml` resumes the exact family architecture and trains on damaged mature pool states.
 4. `tree_environment.yaml` resumes the regeneration checkpoint and trains across randomized local conditions.
 5. `tree_ecology.yaml` loads the environment-trained family and places two semantic tree genomes in one resource field.
@@ -96,7 +96,9 @@ Ecology can route either one shared checkpoint with different genomes or separat
 
 Training uses paired state pools, randomized rollouts, direct continuation loss, raw occupancy range penalties, material/hidden magnitude control, living masks, gradient clipping, and non-finite checks. Mature low-loss samples can be damaged, while the worst pool samples are reseeded.
 
-`latest.pt` is the final optimizer state. `best.pt` is written when the configured deterministic validation panel improves its worst-case score. Full tree presets validate for at least 256 steps and include recovery trials. Archive admission is stricter: the default minimum is 512 growth/persistence steps plus 128 recovery steps across fixed stochastic and environmental cases.
+`latest.pt` is the final optimizer state. `best.pt` is updated when the configured deterministic validation panel matches or improves its worst-case score, so an early zero-score tie cannot freeze the pipeline at its first validation window. A checkpoint is not stable merely because it is named `best.pt`; inspect its validation report and require `accepted: true`. Full tree presets validate for at least 256 steps and include recovery trials. Archive admission is stricter: the default minimum is 512 growth/persistence steps plus 128 recovery steps across fixed stochastic and environmental cases.
+
+Procedural tree targets use target schema version 2. Version 1 could create empty thin-trunk targets on even-sized voxel grids, so version-1 tree checkpoints are deliberately rejected. Retrain specialist → family → regeneration rather than resuming those checkpoints.
 
 A “new variant” means a new valid genome/style-seed combination, not proof of a fundamentally new species. Mutation and interpolation stay inside the declared gene bounds, and interpolation is allowed only within one discrete family. A candidate outside the sampled training distribution can still fail; archive admission requires finite, bounded, connected, persistent, and regenerative validation rather than visual appeal alone.
 

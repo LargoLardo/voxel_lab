@@ -45,6 +45,29 @@ def test_pool_keeps_tree_target_environment_and_style_identity_paired():
     assert pool.genomes[1, 0] == 9 and pool.style_seeds[1] == 109 and pool.ages[1] == 0
 
 
+def test_pool_appends_a_cpu_backed_paired_suffix():
+    def make_pool(ids, device="cpu"):
+        ids = torch.tensor(ids, device=device)
+        return StatePool(
+            ids[:, None].float(), ids[:, None].float(), ids.long(),
+            target_occupancy=ids[:, None].float(),
+            target_materials=ids[:, None].long(),
+            environments=ids[:, None].float(),
+            environment_specs=ids[:, None].double(),
+            style_seeds=ids.long(),
+        )
+
+    saved = make_pool([10, 11])
+    initialized = make_pool([20, 21, 22, 23])
+    saved.append_from(initialized, len(saved.states))
+
+    for name, value in saved.state_dict().items():
+        assert len(value) == 4, name
+        assert value.device.type == "cpu", name
+    assert saved.genomes[:, 0].tolist() == [10, 11, 22, 23]
+    assert saved.style_seeds.tolist() == [10, 11, 22, 23]
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
 def test_cuda_pool_indices_can_select_reseed_entries_and_commit_to_cpu():
     pool = StatePool(torch.zeros(4, 2), torch.arange(4).view(4, 1).float())

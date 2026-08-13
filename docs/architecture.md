@@ -84,7 +84,7 @@ Family training keeps these items paired in every state-pool slot:
 - environment specification and local context
 - creation method (`random`, `interpolation`, or `mutation`)
 
-The curriculum starts in a narrow region around the converted specialist, widens the gene range, introduces within-family interpolation, adds bounded mutation, and then widens environment variation. Continued states are compared directly with their own target after randomized persistence horizons. The worst pool samples are reseeded; mature low-loss samples can be damaged.
+The curriculum starts with all four families balanced in a narrow continuous-gene region, widens the gene range, introduces within-family interpolation, and adds bounded mutation while keeping the environment fixed. Environment variation is reserved for the later environment stage so the first shared model must learn genome separation without a second moving condition. Continued states are compared directly with their own target after randomized persistence horizons. Dead and worst pool samples are reseeded; mature low-loss samples can be damaged only when damage leaves a living remnant.
 
 `tree_regeneration.yaml` resumes the full-range family checkpoint and applies damage throughout its curriculum. `tree_environment.yaml` resumes that exact architecture and introduces randomized environments from the beginning. `resume` is appropriate only when all model dimensions match; specialist-to-family expansion uses `initialize_from_specialist` instead.
 
@@ -100,7 +100,7 @@ Training loss covers:
 
 Finite training loss is necessary but not sufficient. The deterministic validation panel crosses default, boundary/corner, random, interpolated, mutated, and archived genomes with fixed fire-mask seeds and representative environments. Each trial checks state finiteness and magnitude, occupancy-range violations, connectedness, size/shape descriptors, target agreement, drift, and damage recovery.
 
-The full presets use 256-step checkpoint validation plus recovery. `best.pt` advances only when the configured worst-case or low-percentile panel score improves; `latest.pt` remains the final optimizer state and can be worse. Validation uses no gradients, so long horizons add runtime but not backpropagation memory.
+The full presets use 256-step checkpoint validation plus recovery. `best.pt` advances when the configured worst-case or low-percentile panel score matches or improves, preventing a run whose strict score remains zero from freezing at its first validation window. Its validation must still say `accepted: true` before it is treated as stable. `latest.pt` remains the final optimizer state. Validation uses no gradients, so long horizons add runtime but not backpropagation memory.
 
 ## Variant Archive admission
 
@@ -183,6 +183,7 @@ The complete default chain performs 17,000 optimizer iterations before counting 
 - Existing specialist and legacy one-hot checkpoints remain viewable when their recorded dimensions match.
 - Old models without context receive no context or an explicit zero/default context path.
 - Checkpoint format, model kind, genome/environment schema versions, target generator version, training ranges, validation panel, and best persistence score are stored where applicable.
+- Procedural-tree target schema version 2 fixes empty thin-trunk targets on even grids; version-1 tree checkpoints are rejected and must be retrained through the pipeline.
 - Procedural tree targets are stylized voxel organisms, not botanical simulations.
 - Interpolation does not cross discrete topology families.
 - A family model may trade specialist quality for shared capacity.
