@@ -14,6 +14,9 @@ model_width: 64
 fire_rate: 0.5
 iterations: 5000
 rollout_steps: [24, 48]
+# Keeps the retained CUDA autograd graph within a reliable 6 GB laptop-GPU budget.
+# Long-horizon stability remains measured by the separate 512-step validation.
+differentiable_step_limit: 96
 pool_size: 128
 fresh_fraction: 0.25
 damage_probability: 0.35

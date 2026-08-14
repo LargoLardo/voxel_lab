@@ -112,6 +112,10 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
     visual.mkdir(parents=True)
     (visual / "growth.gif").write_bytes(b"GIF89a")
     (visual / ".live.tmp.png").write_bytes(b"temporary")
+    (visual.parent / "config.yaml").write_text(
+        "dashboard_preset: tree_family.yaml\nworld_size: 16\nbatch_size: 8\n",
+        encoding="utf-8",
+    )
 
     state = build_state(tmp_path)
     assert state["configs"][0]["name"] == "smoke_2d.yaml"
@@ -152,6 +156,10 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         assert 'id="labCheckpoint"' in root
         assert 'id="labDeleteCheckpoint"' in root
         assert "/api/checkpoint/delete" in root
+        assert "/api/run/delete" in root and "/api/job/delete" in root
+        assert "data-run-preset" in root and "data-run-delete" in root and "Delete job" in root
+        assert "font-size:30px" in root and "scaleX(2) rotate(180deg)" in root
+        assert ".run-card [data-run-delete]{margin-left:auto;padding:4px 8px;font-size:11px" in root
         assert "Permanently delete" in root
         assert "kind==='specialist'?null" in root
         assert ".field[hidden]{display:none}" in root
@@ -190,6 +198,8 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         assert "labDeviceRate*speed/5" in root
         assert "1× uses one-fifth of measured device throughput" in root
         assert payload["runs"][0]["name"] == "demo"
+        assert payload["runs"][0]["preset"] == "tree_family.yaml"
+        assert payload["runs"][0]["settings"]["batch_size"] == 8
         assert payload["runs"][0]["model_kind"] == ""
         assert payload["runs"][0]["context_channels"] == 0
         assert payload["hardware"]["auto_device"] in {"cpu", "cuda"}
@@ -245,6 +255,61 @@ def test_checkpoint_delete_route_is_scoped_and_closes_loaded_lab(tmp_path):
             delete("latest.pt")
         assert error.value.code == 400
         assert (checkpoints / "latest.pt").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_run_and_completed_job_delete_are_scoped(tmp_path):
+    run = tmp_path / "runs" / "finished"
+    (run / "checkpoints").mkdir(parents=True)
+    (run / "checkpoints" / "best.pt").write_bytes(b"best")
+    job_root = tmp_path / "runs" / ".ui_jobs"
+    job_root.mkdir()
+    log_path, config_path = job_root / "done.log", job_root / "done.yaml"
+    log_path.write_text("done", encoding="utf-8")
+    config_path.write_text("run_name: finished\n", encoding="utf-8")
+
+    class Finished:
+        @staticmethod
+        def poll():
+            return 0
+
+    class Active:
+        @staticmethod
+        def poll():
+            return None
+
+    server = create_server(tmp_path, port=0)
+    server.jobs["done"] = {
+        "id": "done", "run_name": "finished", "process": Finished(),
+        "log_path": log_path, "config_path": config_path,
+    }
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def post(path, payload):
+        request = Request(
+            f"http://127.0.0.1:{server.server_port}{path}",
+            data=json.dumps({"token": server.token, **payload}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        return json.load(urlopen(request, timeout=5))
+
+    try:
+        assert post("/api/job/delete", {"job": "done"}) == {"deleted": "done"}
+        assert not log_path.exists() and not config_path.exists() and "done" not in server.jobs
+
+        assert post("/api/run/delete", {"run": "finished"}) == {"deleted": "finished", "closed_lab": False}
+        assert not run.exists()
+
+        active_run = tmp_path / "runs" / "active"
+        active_run.mkdir()
+        server.jobs["active"] = {"id": "active", "run_name": "active", "process": Active()}
+        with pytest.raises(HTTPError) as error:
+            post("/api/run/delete", {"run": "active"})
+        assert error.value.code == 400
+        assert active_run.exists()
     finally:
         server.shutdown()
         server.server_close()

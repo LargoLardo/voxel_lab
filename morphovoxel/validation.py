@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
-from typing import Iterable, Literal, Mapping, Sequence
+from typing import Callable, Iterable, Literal, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -489,16 +489,19 @@ def validate_panel(
     criteria: ValidationCriteria = ValidationCriteria(),
     aggregation: Literal["worst", "low_percentile"] = "worst",
     low_percentile: float = 0.1,
+    on_trial: Callable[[int, int, ValidationTrial], None] | None = None,
 ) -> ValidationReport:
     """Validate a deterministic panel sequentially within a safe memory envelope."""
     cases = tuple(panel)
     if not cases:
         raise ValueError("validation panel cannot be empty")
-    trials = tuple(
-        validate_candidate(
+    trials = []
+    for index, case in enumerate(cases, 1):
+        trial = validate_candidate(
             model, case, layout=layout, world_size=world_size, steps=steps,
             recovery_steps=recovery_steps, seed_size=seed_size, device=device, criteria=criteria,
         )
-        for case in cases
-    )
-    return ValidationReport(trials, criteria, aggregation, low_percentile)
+        trials.append(trial)
+        if on_trial is not None:
+            on_trial(index, len(cases), trial)
+    return ValidationReport(tuple(trials), criteria, aggregation, low_percentile)

@@ -1,15 +1,19 @@
 import random
+from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import torch
 
 from morphovoxel.genomes import MORPHOLOGIES
 from morphovoxel.state import StateLayout
 from morphovoxel.training.trainer import (
     _keep_viable_damage,
+    _guard_tree_family_cuda_memory,
     _pool_actions,
     _restore_rng_state,
     _step_range,
+    _training_horizons,
     _validate_persistence,
     train,
 )
@@ -22,6 +26,26 @@ def test_step_range_rejects_negative_scalar():
         pass
     else:
         raise AssertionError("negative steps must be rejected")
+
+
+def test_differentiable_horizon_cap_preserves_both_training_losses():
+    random.seed(7)
+    for _ in range(20):
+        growth, persistence = _training_horizons((24, 64), (32, 96), 96)
+        assert 24 <= growth <= 64
+        assert 32 <= persistence <= 96
+        assert growth + persistence <= 96
+
+
+def test_tree_family_cuda_guard_rejects_the_32_cubed_batch_eight_workload(monkeypatch):
+    monkeypatch.setattr(
+        torch.cuda, "get_device_properties", lambda _device: SimpleNamespace(total_memory=6 * 1024**3),
+    )
+    with pytest.raises(ValueError, match="world_size: 32 use batch_size: 2"):
+        _guard_tree_family_cuda_memory(
+            device=torch.device("cuda"), dimensions=3, world_size=32, batch_size=8,
+            rollout_maximum=48, persistence_maximum=32, differentiable_step_limit=None,
+        )
 
 
 def test_resume_rng_state_continues_python_numpy_and_torch_streams():

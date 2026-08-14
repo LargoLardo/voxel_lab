@@ -78,6 +78,56 @@ def _step_range(value, default: tuple[int, int]) -> tuple[int, int]:
     return minimum, maximum
 
 
+def _training_horizons(
+    rollout_range: tuple[int, int],
+    persistence_range: tuple[int, int],
+    differentiable_step_limit: int | None = None,
+) -> tuple[int, int]:
+    """Sample a growth/recheck horizon that fits in the retained autograd graph."""
+    minimum, maximum = rollout_range
+    persistence_minimum, persistence_maximum = persistence_range
+    if differentiable_step_limit is None:
+        return random.randint(minimum, maximum), random.randint(persistence_minimum, persistence_maximum)
+    if isinstance(differentiable_step_limit, bool) or differentiable_step_limit <= 0:
+        raise ValueError("differentiable_step_limit must be a positive integer")
+    growth_maximum = min(maximum, differentiable_step_limit - persistence_minimum)
+    if growth_maximum < minimum:
+        raise ValueError(
+            "differentiable_step_limit is smaller than the minimum rollout_steps plus persistence_steps"
+        )
+    steps = random.randint(minimum, growth_maximum)
+    return steps, random.randint(persistence_minimum, min(persistence_maximum, differentiable_step_limit - steps))
+
+
+def _guard_tree_family_cuda_memory(
+    *,
+    device: torch.device,
+    dimensions: int,
+    world_size: int,
+    batch_size: int,
+    rollout_maximum: int,
+    persistence_maximum: int,
+    differentiable_step_limit: int | None,
+) -> None:
+    """Reject a known-unworkable 32³ family setup before CUDA runs out of memory."""
+    if device.type != "cuda" or dimensions != 3:
+        return
+    total_memory = torch.cuda.get_device_properties(device).total_memory
+    if total_memory > 8 * 1024**3:
+        return
+    horizon = rollout_maximum + persistence_maximum
+    if differentiable_step_limit is not None:
+        horizon = min(horizon, differentiable_step_limit)
+    workload = batch_size * world_size**3 * horizon
+    if workload > 3_250_000:
+        raise ValueError(
+            "CUDA memory guard: this tree-family workload is too large for an 8 GB-or-smaller GPU. "
+            "For world_size: 32 use batch_size: 2, rollout_steps: [24, 32], "
+            "persistence_steps: [16, 16], and differentiable_step_limit: 48; "
+            "use world_size: 16 for the standard batch_size: 8 preset."
+        )
+
+
 def _tree_settings(config: dict) -> tuple[TreeGenome, EnvironmentSpec]:
     genome_value = config.get("tree_genome", {})
     environment_value = config.get("environment", {})
@@ -344,6 +394,16 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     minimum, maximum = _step_range(config.get("rollout_steps"), (16, 32) if dimensions == 2 else (8, 16))
     persistence_value = config.get("persistence_steps", config.get("stability_steps", 0))
     persistence_minimum, persistence_maximum = _step_range(persistence_value, (0, 0))
+    configured_horizon_limit = config.get("differentiable_step_limit")
+    if isinstance(configured_horizon_limit, bool):
+        raise ValueError("differentiable_step_limit must be a positive integer")
+    differentiable_step_limit = None if configured_horizon_limit is None else int(configured_horizon_limit)
+    if tree_family:
+        _guard_tree_family_cuda_memory(
+            device=device, dimensions=dimensions, world_size=size, batch_size=batch,
+            rollout_maximum=maximum, persistence_maximum=persistence_maximum,
+            differentiable_step_limit=differentiable_step_limit,
+        )
     validation_steps = int(config.get("validation_steps", 256 if conditional else 0))
     validation_every = max(1, int(config.get("validation_every", max(1, iterations))))
     validation_start = int(config.get("validation_start", max(maximum, validation_steps // 4)))
@@ -532,7 +592,9 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 labels = torch.arange(step * batch, (step + 1) * batch, device=device) % (len(MORPHOLOGIES) if conditional else 1)
                 genomes = one_hot_genomes(labels) if conditional else None
                 target, material = _targets(dimensions, labels, size, seed, conditional, device, config.get("target_kind"))
-        steps = random.randint(int(minimum), int(maximum))
+        steps, persistence_steps = _training_horizons(
+            (minimum, maximum), (persistence_minimum, persistence_maximum), differentiable_step_limit,
+        )
         preview_started = time.perf_counter() if preview_image and (step + 1) % 10 == 0 else None
         final_state, _ = rollout(
             model, state, steps, genomes, context=context, shared_fire_pairs=tree_family,
@@ -543,7 +605,6 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         if tree_family:
             components["counterfactual"] = counterfactual_loss(final_state, target, layout)
             loss = loss + float(config.get("counterfactual_weight", 1.0)) * components["counterfactual"]
-        persistence_steps = random.randint(persistence_minimum, persistence_maximum)
         committed_state = final_state
         if persistence_steps:
             committed_state, _ = rollout(
@@ -630,6 +691,10 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                     seed_size=int(config.get("seed_size", 1)), device=device, criteria=criteria,
                     aggregation=str(config.get("validation_aggregation", "worst")),
                     low_percentile=float(config.get("validation_low_percentile", 0.1)),
+                    on_trial=lambda completed, total, trial: LOGGER.info(
+                        "validation progress step=%d case=%d/%d percent=%.1f latest_score=%.6f",
+                        step + 1, completed, total, completed * 100 / total, trial.score,
+                    ) if completed == 1 or completed == total or completed % max(1, total // 20) == 0 else None,
                 )
                 worst_score = report.score
                 genome_scores = {trial.case.case_id: trial.score for trial in report.trials}

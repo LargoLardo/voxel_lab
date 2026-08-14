@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import signal
+import shutil
 import subprocess
 import sys
 import threading
@@ -176,6 +177,15 @@ def build_state(project_root: Path) -> dict[str, Any]:
             "checkpoints": [path.name for path in list_checkpoints(run)],
             "model_kind": model_kind, "context_channels": context_channels,
             "tree_schema_compatible": tree_schema_compatible,
+            "preset": run_config.get("dashboard_preset") or None,
+            "settings": {
+                key: run_config[key]
+                for key in (
+                    "model_kind", "dimensions", "world_size", "batch_size", "iterations",
+                    "rollout_steps", "persistence_steps", "learning_rate", "device",
+                )
+                if key in run_config
+            },
         })
     runs.sort(key=lambda item: item["updated"], reverse=True)
     cuda_available = torch.cuda.is_available()
@@ -263,6 +273,7 @@ def _launch(server: "DashboardServer", payload: dict[str, Any]) -> dict[str, Any
         config["overrides"] = overrides
     else:
         config.update(overrides)
+    config["dashboard_preset"] = filename
 
     if filename != "full_experiment.yaml":
         checkpoint_config = config.get("base", config) if filename == "ecology_experiments.yaml" else config
@@ -324,6 +335,7 @@ def _launch(server: "DashboardServer", payload: dict[str, Any]) -> dict[str, Any
         server.jobs[job_id] = {
             "id": job_id, "process": process, "config": filename, "run_name": run_name,
             "command": " ".join(command), "started": datetime.now(timezone.utc).isoformat(), "log_path": log_path,
+            "config_path": config_path,
             "runs_root": runs_root,
             "live_path": None if kind == "experiments" or filename == "ecology_experiments.yaml" else runs_root / run_name / "visualizations" / "live.png",
         }
@@ -465,6 +477,39 @@ class DashboardHandler(BaseHTTPRequestHandler):
             payload = self._payload()
             if self.path == "/api/run":
                 self._json(_launch(self.server, payload), HTTPStatus.ACCEPTED)
+            elif self.path == "/api/run/delete":
+                run_name = str(payload.get("run", ""))
+                if not RUN_NAME.fullmatch(run_name):
+                    raise ValueError("unknown run")
+                run = _inside(self.server.project_root / "runs", run_name)
+                if not run.is_dir():
+                    raise ValueError("unknown run")
+                with self.server.jobs_lock:
+                    if any(
+                        job["run_name"] == run_name and job["process"].poll() is None
+                        for job in self.server.jobs.values()
+                    ):
+                        raise ValueError("stop the active job before deleting its run")
+                with self.server.lab_load_lock:
+                    with self.server.lab_lock:
+                        closed_lab = bool(self.server.lab and self.server.lab.run_name == run_name)
+                        if closed_lab:
+                            self.server.lab = None
+                        shutil.rmtree(run)
+                self._json({"deleted": run_name, "closed_lab": closed_lab})
+            elif self.path == "/api/job/delete":
+                job_id = str(payload.get("job", ""))
+                with self.server.jobs_lock:
+                    job = self.server.jobs.get(job_id)
+                    if job is None:
+                        raise ValueError("unknown job")
+                    if job["process"].poll() is None:
+                        raise ValueError("stop the active job before deleting it")
+                    self.server.jobs.pop(job_id)
+                for path in (job["log_path"], job.get("config_path")):
+                    if isinstance(path, Path):
+                        path.unlink(missing_ok=True)
+                self._json({"deleted": job_id})
             elif self.path == "/api/checkpoint/delete":
                 run_name = str(payload.get("run", ""))
                 if not RUN_NAME.fullmatch(run_name):
@@ -894,6 +939,15 @@ async function launch(){try{const job=await api('/api/run',{method:'POST',header
 $('#labRun').onchange=syncLabCheckpoints;$('#treeApply').onclick=commitTreeDraft;$('#treeRandomize').onclick=randomizeTree;$('#treeMutate').onclick=mutateTree;$('#treeMutation').oninput=()=>$('#treeMutationValue').value=Number($('#treeMutation').value).toFixed(2);$('#treeStoreA').onclick=()=>storeTreeSlot('A');$('#treeStoreB').onclick=()=>storeTreeSlot('B');$('#treeInterpolation').oninput=()=>$('#treeInterpolationValue').value=Number($('#treeInterpolation').value).toFixed(2);$('#treeInterpolate').onclick=interpolateTree;$('#treeDownload').onclick=downloadTreeGenome;$('#treeLoad').onclick=()=>$('#treeJsonFile').click();$('#treeJsonFile').onchange=event=>{if(event.target.files[0])loadTreeGenomeFile(event.target.files[0])};$('#treeValidate').onclick=validateTreeCandidate;$('#treeArchive').onclick=saveVariant;$('#environmentApply').onclick=applyEnvironment;$('#environmentReset').onclick=()=>setEnvironmentDraft(lab?.environment||treeSchema?.default_environment,false);$('#archiveRefresh').onclick=refreshVariantArchive;for(const id of ['#archiveFamily','#archiveMethod','#archiveModelKind'])$(id).onchange=refreshVariantArchive;$('#archiveMinScore').onchange=refreshVariantArchive;loadTreeSchema().then(()=>{$('#archiveFamily').innerHTML='<option value="">All families</option>'+treeSchema.families.map(name=>`<option value="${esc(name)}">${esc(prettyName(name))}</option>`).join('');refreshVariantArchive()}).catch(error=>toast(error.message,true));
 document.querySelectorAll('.nav button[data-kind]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');kind=b.dataset.kind;configs(true);runs()});$('#labNav').onclick=()=>$('#designLab').scrollIntoView({behavior:'smooth',block:'start'});$('#configSelect').onchange=loadConfig;$('#dependencyCheckpoint').onchange=()=>setYamlText(dependencySpecs[$('#configSelect').value].key,$('#dependencyCheckpoint').value);$('#editor').onchange=()=>{renderSliders();syncDependencyCheckpoints()};$('#evaluationRun').onchange=syncEvaluationCheckpoints;$('#evaluationRunButton').onclick=evaluateCheckpoint;$('#reset').onclick=loadConfig;$('#launch').onclick=launch;$('#refresh').onclick=refresh;$('#search').oninput=runs;$('#labLoad').onclick=()=>openLab();$('#labDeleteCheckpoint').onclick=deleteLabCheckpoint;$('#labPlay').onclick=toggleLab;$('#labStep').onclick=()=>labControl('advance',{steps:1});$('#labReset').onclick=()=>labControl('reset');$('#labClear').onclick=()=>labControl('clear');$('#labGenome').onchange=()=>labControl('genome',{genome:Number($('#labGenome').value)});$('#labView').onchange=()=>{syncLabLayer(true);drawLab()};$('#labLayer').oninput=()=>{$('#labLayerValue').value=$('#labLayer').value;drawLab()};$('#labSpeed').oninput=()=>{syncLabSpeed();if(labPlaying){const generation=++labPlayGeneration;clearTimeout(labLoopTimer);labLoopTimer=setTimeout(()=>labLoop(generation),labBusy?10:0)}};$('#labRadius').oninput=()=>$('#labRadiusValue').value=$('#labRadius').value;const labCanvas=$('#labCanvas');labCanvas.onpointerdown=event=>{if(event.button!==0||!lab)return;labCanvas.setPointerCapture(event.pointerId);if(labVoxelMode()){labOrbiting=true;labLastX=event.clientX;labLastY=event.clientY;return}labEditing=true;labMoved=false};labCanvas.onpointermove=event=>{if(labOrbiting){labYaw+=(event.clientX-labLastX)*.012;labPitch=Math.max(-1.45,Math.min(1.45,labPitch+(event.clientY-labLastY)*.012));labLastX=event.clientX;labLastY=event.clientY;renderVoxels();return}if(labEditing&&$('#labTool').value==='erase'){labMoved=true;clearTimeout(labClickTimer);editLab(labEditPayload(event),false,false)}};labCanvas.onpointerup=event=>{if(labOrbiting){labOrbiting=false;return}if(!labEditing)return;labEditing=false;const payload=labEditPayload(event);if(labMoved){labAction('erase',payload,true);return}if($('#labTool').value==='seed')editLab(payload);else{clearTimeout(labClickTimer);labClickTimer=setTimeout(()=>editLab(payload),450)}};labCanvas.onpointercancel=()=>{labEditing=false;labOrbiting=false};labCanvas.ondblclick=event=>{if(labVoxelMode())return;event.preventDefault();clearTimeout(labClickTimer);editLab(labEditPayload(event),true)};labCanvas.onwheel=event=>{if(!labVoxelMode())return;event.preventDefault();labZoom=Math.max(.5,Math.min(3,labZoom*Math.exp(-event.deltaY*.001)));renderVoxels()};labCanvas.oncontextmenu=event=>event.preventDefault();window.addEventListener('resize',()=>{if(labVoxelMode())renderVoxels()});refresh();setInterval(()=>{if(state.jobs.some(j=>j.status==='running'))refresh()},2000);
 document.querySelectorAll('.nav button[data-page]').forEach(button=>button.onclick=()=>showPage(button.dataset.page));$('#openTreeGenomeWindow').onclick=()=>openUtilityWindow('genome');$('#openEnvironmentWindow').onclick=()=>openUtilityWindow('environment-lab');labCanvas.addEventListener('pointermove',()=>{if(labOrbiting)renderTargetVoxels()});labCanvas.addEventListener('wheel',renderTargetVoxels);window.addEventListener('resize',renderTargetVoxels);setInterval(()=>{if((lab||state.lab)&&!state.jobs.some(job=>job.status==='running'))refresh()},2000);
+
+function jobs(){const running=state.jobs.filter(job=>job.status==='running'),runNames=new Set(state.runs.map(run=>run.name));$('#jobCount').textContent=`${running.length} active`;return state.jobs.map(job=>{const canShowStats=runNames.has(job.run_name),actions=`${canShowStats?`<button class="btn" data-job-stats="${esc(job.run_name)}">Stats</button>`:''}${job.status==='running'?`<button class="btn danger" data-stop-job="${esc(job.id)}">Stop</button>`:`<button class="btn danger" data-delete-job="${esc(job.id)}">Delete job</button>`}`;return`<article class="job"><div class="job-row"><div><b>${esc(job.run_name)}</b><div class="status ${job.status}">${esc(job.status)}</div></div><div class="actions">${actions}</div></div>${job.live?`<figure class="live-view"><img src="${esc(job.live.url)}" alt="Live organism state for ${esc(job.run_name)}"><figcaption>${esc(liveLabel(job.live))}</figcaption></figure>`:''}<pre>${esc(job.log||'Waiting for output…')}</pre></article>`}).join('')}
+function bindRunControls(){document.querySelectorAll('[data-run-card]').forEach(card=>card.onclick=()=>showRun(card.dataset.runCard));document.querySelectorAll('[data-run-stats],[data-job-stats]').forEach(button=>button.onclick=event=>{event.stopPropagation();showRun(button.dataset.runStats||button.dataset.jobStats)});document.querySelectorAll('[data-run-delete]').forEach(button=>button.onclick=event=>{event.stopPropagation();deleteRun(button.dataset.runDelete)});document.querySelectorAll('[data-stop-job]').forEach(button=>button.onclick=()=>stopJob(button.dataset.stopJob));document.querySelectorAll('[data-delete-job]').forEach(button=>button.onclick=()=>deleteJob(button.dataset.deleteJob))}
+function runs(){const query=$('#search').value.toLowerCase(),items=state.runs.filter(run=>matchesArea(run)&&run.name.toLowerCase().includes(query));$('#runCount').textContent=`${state.runs.length} runs`;$('#runList').innerHTML=jobs()+(items.length?items.map(run=>`<article class="run-card ${selectedRun===run.name?'active':''}" data-run-card="${esc(run.name)}"><h3>${esc(run.name)}</h3><small>${esc(run.kind)} · ${run.media.length} visuals · ${run.lab_ready?'lab ready':'artifacts only'}</small><div class="actions" style="margin-top:12px"><button class="btn" data-run-stats="${esc(run.name)}">Stats</button><button class="btn danger" data-run-delete="${esc(run.name)}">Delete run</button></div></article>`).join(''):'<div class="empty">No matching runs.</div>');bindRunControls()}
+async function deleteRun(name){if(!confirm(`Permanently delete run "${name}" and all of its checkpoints, metrics, and images?`))return;try{await api('/api/run/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,run:name})});if(selectedRun===name){selectedRun=null;$('#resultTitle').textContent='Select a run';$('#resultKind').textContent='RESULTS';$('#resultDate').textContent='—';$('#resultBody').innerHTML='<div class="empty">Run deleted.</div>'}toast(`Deleted ${name}`);await refresh()}catch(error){toast(error.message,true)}}
+async function deleteJob(id){if(!confirm('Delete this completed job record and its dashboard log? The run itself will remain.'))return;try{await api('/api/job/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,job:id})});toast('Deleted job record');await refresh()}catch(error){toast(error.message,true)}}
+document.head.insertAdjacentHTML('beforeend','<style>.run-preset{margin-top:12px;border-top:1px solid var(--line);padding-top:6px}.run-preset summary{list-style:none;cursor:pointer;width:100%;padding:5px 0;text-align:center;color:var(--muted);font-size:0;line-height:1}.run-preset summary::-webkit-details-marker{display:none}.run-preset summary::before{content:"⌄";display:inline-block;font-size:30px;font-weight:800;transform:scaleX(2);transition:transform .16s ease,color .16s ease}.run-preset[open] summary{color:var(--mint)}.run-preset[open] summary::before{transform:scaleX(2) rotate(180deg)}.run-preset-body{padding:10px 2px 2px;color:var(--muted);font-size:12px}.run-preset-body b{display:block;color:var(--text);margin-bottom:6px}.run-preset dl{display:grid;grid-template-columns:auto 1fr;gap:3px 8px;margin:0}.run-preset dt{color:var(--muted)}.run-preset dd{margin:0;color:var(--text);overflow-wrap:anywhere}.run-card [data-run-delete]{margin-left:auto;padding:4px 8px;font-size:11px;border-radius:7px}</style>');
+function bindRunControls(){document.querySelectorAll('[data-run-card]').forEach(card=>card.onclick=()=>showRun(card.dataset.runCard));document.querySelectorAll('[data-run-preset]').forEach(details=>details.onclick=event=>event.stopPropagation());document.querySelectorAll('[data-run-delete]').forEach(button=>button.onclick=event=>{event.stopPropagation();deleteRun(button.dataset.runDelete)});document.querySelectorAll('[data-job-stats]').forEach(button=>button.onclick=()=>showRun(button.dataset.jobStats));document.querySelectorAll('[data-stop-job]').forEach(button=>button.onclick=()=>stopJob(button.dataset.stopJob));document.querySelectorAll('[data-delete-job]').forEach(button=>button.onclick=()=>deleteJob(button.dataset.deleteJob))}
+function runs(){const query=$('#search').value.toLowerCase(),items=state.runs.filter(run=>matchesArea(run)&&run.name.toLowerCase().includes(query));$('#runCount').textContent=`${state.runs.length} runs`;$('#runList').innerHTML=jobs()+(items.length?items.map(run=>{const settings=Object.entries(run.settings||{}).map(([key,value])=>`<dt>${esc(prettyName(key))}</dt><dd>${esc(Array.isArray(value)?value.join(' – '):value)}</dd>`).join('')||'<dd>Saved configuration is unavailable.</dd>';return`<article class="run-card ${selectedRun===run.name?'active':''}" data-run-card="${esc(run.name)}"><h3>${esc(run.name)}</h3><small>${esc(run.kind)} · ${run.media.length} visuals · ${run.lab_ready?'lab ready':'artifacts only'}</small><details class="run-preset" data-run-preset><summary title="Show preset and run settings" aria-label="Show preset and run settings">⌄</summary><div class="run-preset-body"><b>${esc(run.preset||'Saved configuration')}</b><dl>${settings}</dl></div></details><div class="actions" style="margin-top:10px"><button class="btn danger" data-run-delete="${esc(run.name)}">Delete run</button></div></article>`}).join(''):'<div class="empty">No matching runs.</div>');bindRunControls()}
 </script></body></html>'''
 
 

@@ -94,6 +94,7 @@ def test_panel_aggregation_and_failed_or_short_protocols_are_explicit():
     layout = StateLayout(materials=4, hidden=1)
     cases = build_candidate_panel(TreeGenome(), fire_seeds=(5, 6), environments=(EnvironmentSpec(),))
     model = _target_model(cases[0], layout, TreeGenome.model_size())
+    progress = []
     report = validate_panel(
         model,
         cases,
@@ -103,10 +104,12 @@ def test_panel_aggregation_and_failed_or_short_protocols_are_explicit():
         recovery_steps=64,
         aggregation="low_percentile",
         low_percentile=0.25,
+        on_trial=lambda completed, total, trial: progress.append((completed, total, trial.case.case_id)),
     )
     assert report.validated and report.accepted
     assert report.score == report.low_percentile_score == report.worst_score
     assert report.to_dict()["criteria"]["min_steps"] == 256
+    assert [item[:2] for item in progress] == [(1, 2), (2, 2)]
 
     short = validate_candidate(model, cases[0], layout=layout, world_size=12, steps=8, recovery_steps=2)
     assert not short.validated and not short.accepted and short.score == 0
