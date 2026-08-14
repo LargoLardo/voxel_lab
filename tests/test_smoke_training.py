@@ -59,7 +59,7 @@ def test_tree_family_without_context_uses_default_environment_compatibility_path
     run = train({
         "run_name": "tree_family_no_context", "runs_root": str(tmp_path),
         "model_kind": "tree_family", "environment_conditioning": False,
-        "device": "cpu", "seed": 5, "world_size": 16, "batch_size": 1,
+        "device": "cpu", "seed": 5, "world_size": 16, "batch_size": 2,
         "pool_size": 2, "materials": 4, "hidden_channels": 2,
         "model_width": 8, "fire_rate": 1, "iterations": 1,
         "rollout_steps": 1, "persistence_steps": 0, "validation_steps": 0,

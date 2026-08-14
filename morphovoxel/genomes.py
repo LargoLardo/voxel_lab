@@ -11,7 +11,7 @@ from torch import nn
 
 MORPHOLOGIES = ("branching", "conical", "radial", "mushroom")
 TREE_FAMILIES = ("branching", "conifer", "broad_canopy", "weeping")
-TREE_GENOME_VERSION = 1
+TREE_GENOME_VERSION = 2
 TREE_STYLE_PHASE_SCALE = 0.00000161803398875
 
 
@@ -24,20 +24,24 @@ class GeneSpec:
     minimum: float = -1.0
     maximum: float = 1.0
     default: float = 0.0
+    stage: str = "family"
+    descriptor: str = ""
 
 
 TREE_GENE_SPECS = (
-    GeneSpec("height", "Height"),
-    GeneSpec("trunk_thickness", "Trunk thickness"),
-    GeneSpec("branch_density", "Branch density"),
-    GeneSpec("branch_inclination", "Branch inclination"),
-    GeneSpec("branch_length", "Branch length"),
-    GeneSpec("canopy_spread", "Canopy spread"),
-    GeneSpec("taper", "Taper"),
-    GeneSpec("asymmetry", "Asymmetry"),
-    GeneSpec("light_tropism", "Light tropism"),
-    GeneSpec("root_canopy_allocation", "Root / canopy allocation"),
+    GeneSpec("height", "Height", descriptor="height"),
+    GeneSpec("trunk_thickness", "Trunk thickness", descriptor="trunk volume"),
+    GeneSpec("branch_density", "Branch density", descriptor="branch count"),
+    GeneSpec("branch_inclination", "Branch inclination", descriptor="branch elevation"),
+    GeneSpec("branch_length", "Branch length", descriptor="branch reach"),
+    GeneSpec("canopy_spread", "Canopy spread", descriptor="canopy width"),
+    GeneSpec("asymmetry", "Asymmetry", descriptor="signed canopy offset"),
+    GeneSpec("light_tropism", "Light tropism", stage="environment", descriptor="light-facing offset"),
+    GeneSpec("root_canopy_allocation", "Root / canopy allocation", descriptor="canopy/root ratio"),
 )
+
+FAMILY_GENE_NAMES = tuple(spec.name for spec in TREE_GENE_SPECS if spec.stage == "family")
+ENVIRONMENT_GENE_NAMES = tuple(spec.name for spec in TREE_GENE_SPECS if spec.stage == "environment")
 
 
 @dataclass(frozen=True)

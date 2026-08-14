@@ -74,7 +74,7 @@ These CPU presets are independent, intentionally tiny pipeline checks. They do n
 
 ## Three separate inputs
 
-- **Genome** is inherited and fixed for an organism unless live remodeling is explicitly enabled. A tree genome contains one discrete topology family, ten bounded continuous style genes, and one reproducible style seed.
+- **Genome** is inherited and fixed for an organism unless live remodeling is explicitly enabled. A tree genome contains one discrete topology family, nine bounded continuous style genes, and one reproducible style seed. Taper was removed; light tropism is locked until directional-light environment training.
 - **Environment** changes around an organism. The NCA can receive local light, water, energy, substrate, obstacles, neighboring occupancy, gravity, and wind fields before proposing its update.
 - **Cell state** is developmental memory: occupancy, material logits, optional energy, and hidden channels. Damage clears every state channel in the affected region.
 
@@ -94,19 +94,19 @@ Ecology can route either one shared checkpoint with different genomes or separat
 
 ## Persistence and the Variant Archive
 
-Training uses paired state pools, randomized rollouts, direct continuation loss, raw occupancy range penalties, material/hidden magnitude control, living masks, gradient clipping, and non-finite checks. Mature low-loss samples can be damaged, while the worst pool samples are reseeded.
+Family training uses stratified low/high counterfactual pairs: seed, style, environment, fire masks, and damage are shared while exactly one gene changes. The loss combines balanced occupancy/material terms with soft Dice/IoU, distance-to-target, height, width, volume, centroid, and branch-distribution descriptors. The model uses one shared perception backbone with family-specific FiLM and output heads. Living masks, magnitude/range penalties, gradient clipping, and non-finite checks remain active.
 
 `latest.pt` is the final optimizer state. `best.pt` is updated when the configured deterministic validation panel matches or improves its worst-case score, so an early zero-score tie cannot freeze the pipeline at its first validation window. A checkpoint is not stable merely because it is named `best.pt`; inspect its validation report and require `accepted: true`. Full tree presets validate for at least 256 steps and include recovery trials. Archive admission is stricter: the default minimum is 512 growth/persistence steps plus 128 recovery steps across fixed stochastic and environmental cases.
 
-Procedural tree targets use target schema version 2. Version 1 could create empty thin-trunk targets on even-sized voxel grids, so version-1 tree checkpoints are deliberately rejected. Retrain specialist → family → regeneration rather than resuming those checkpoints.
+Procedural tree targets use target schema version 3 and tree genomes use schema version 2. Earlier schemas are deliberately rejected because the gene count, target geometry, and family architecture changed. Retrain specialist → family → regeneration → environment rather than resuming an old tree checkpoint.
 
 A “new variant” means a new valid genome/style-seed combination, not proof of a fundamentally new species. Mutation and interpolation stay inside the declared gene bounds, and interpolation is allowed only within one discrete family. A candidate outside the sampled training distribution can still fail; archive admission requires finite, bounded, connected, persistent, and regenerative validation rather than visual appeal alone.
 
 ## GPU guidance
 
-`device: auto` selects CUDA when the installed PyTorch build can use it and otherwise falls back to CPU. The full presets use FP32, a `16³` world, and batch size 4 as a conservative starting point for an RTX 4050 Laptop GPU with 6 GB VRAM. Long 256–512-step validation runs under no-gradient inference.
+`device: auto` selects CUDA when the installed PyTorch build can use it and otherwise falls back to CPU. The full presets use FP32 and a `16³` world; family uses batch 8, while the longer regeneration/environment horizons use batch 4 on an RTX 4050 Laptop GPU with 6 GB VRAM. Long 256–512-step validation runs under no-gradient inference.
 
-A focused local feasibility probe on the target RTX 4050 (5.997 GiB usable, PyTorch 2.13.0+cu126) completed a width-64, world-16, batch-4 FP32 update with 48 growth + 32 persistence steps, backward, and Adam in 0.943 seconds. It peaked at 878.44 MiB allocated / 1030 MiB reserved. A separate 256-step no-gradient rollout was finite in 0.203 seconds and peaked at 19.05 MiB allocated. This demonstrates strong memory headroom for the preset shape; it does not predict convergence time or organism quality.
+A focused probe of the redesigned family model on the target RTX 4050 (5.997 GiB usable, PyTorch 2.13.0+cu126) completed batch 8 at 48 growth + 32 persistence steps, all structural/counterfactual losses, backward, clipping, and Adam in 1.059 seconds. It peaked at 3088.5 MiB allocated / 3276.0 MiB reserved. The longer regeneration maximum (batch 4, 64 + 96 steps) remained finite at 2994.2 MiB allocated / 3570.0 MiB reserved. Both fit, but close other GPU-heavy applications before full training; these probes do not predict convergence time or morphology quality.
 
 For a `24³` world, start with batch size 1 or 2. If CUDA runs out of memory, reduce batch size first, then rollout/persistence length, hidden channels, or model width. Do not enable mixed precision until the model remains finite and bounded in FP32. The five full stages contain 17,000 optimizer iterations plus repeated multi-case persistence/recovery panels; on a thermally constrained laptop, budget multiple hours and be prepared for an overnight run. Panel validation can dominate wall time even though its no-gradient memory use is modest. Run one stage at a time if you need dependable checkpoints around reboots or thermal limits. Smoke presets usually finish in seconds or minutes and are the fast installation check.
 

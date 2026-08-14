@@ -11,7 +11,7 @@ import torch
 
 from .environment import ENVIRONMENT_SCHEMA_VERSION
 from .genomes import TREE_GENOME_VERSION, TreeGenome
-from .model_3d import NeuralCA3D
+from .model_3d import NeuralCA3D, TreeFamilyNCA3D
 from .targets.targets_3d import TREE_TARGET_VERSION
 
 CHECKPOINT_FORMAT = "morphovoxel"
@@ -343,7 +343,7 @@ def load_model_payload(
     return metadata, legacy
 
 
-def _verify_specialist_conversion(source: NeuralCA3D, destination: NeuralCA3D) -> None:
+def _verify_specialist_conversion(source: NeuralCA3D, destination: torch.nn.Module) -> None:
     source_parameter = next(source.parameters())
     destination_parameter = next(destination.parameters())
     if source_parameter.device != destination_parameter.device or source_parameter.dtype != destination_parameter.dtype:
@@ -368,6 +368,8 @@ def _verify_specialist_conversion(source: NeuralCA3D, destination: NeuralCA3D) -
         if source_context is not None:
             destination_context[:, : source.context_channels] = source_context
     genome = torch.zeros(1, destination.genome_size, device=destination_parameter.device, dtype=destination_parameter.dtype)
+    if isinstance(destination, TreeFamilyNCA3D):
+        genome[:, 0] = 1
     source_fire, destination_fire = source.fire_rate, destination.fire_rate
     try:
         source.fire_rate = destination.fire_rate = 1.0
@@ -385,13 +387,13 @@ def _verify_specialist_conversion(source: NeuralCA3D, destination: NeuralCA3D) -
 
 def convert_specialist_to_family(
     source: NeuralCA3D,
-    destination: NeuralCA3D,
+    destination: NeuralCA3D | TreeFamilyNCA3D,
     *,
     verify: bool = True,
-) -> NeuralCA3D:
+) -> NeuralCA3D | TreeFamilyNCA3D:
     """Initialize a family NCA from a specialist without changing its zero-genome rule."""
-    if not isinstance(source, NeuralCA3D) or not isinstance(destination, NeuralCA3D):
-        raise CheckpointCompatibilityError("specialist-to-family conversion requires two NeuralCA3D models")
+    if not isinstance(source, NeuralCA3D) or not isinstance(destination, (NeuralCA3D, TreeFamilyNCA3D)):
+        raise CheckpointCompatibilityError("specialist-to-family conversion requires a NeuralCA3D specialist and family NCA")
     if source.genome_size:
         raise CheckpointCompatibilityError("source model must be a specialist with genome_size=0")
     if destination.genome_size <= 0:
@@ -404,6 +406,37 @@ def convert_specialist_to_family(
         raise CheckpointCompatibilityError("destination cannot remove specialist environment context channels")
     if source.fire_rate != destination.fire_rate:
         raise CheckpointCompatibilityError("specialist and family fire rates must match")
+
+    if isinstance(destination, TreeFamilyNCA3D):
+        source_first = source.update[0]
+        source_last = source.update[-1]
+        if source_first.out_channels != destination.shared.out_channels:
+            raise CheckpointCompatibilityError("specialist and family hidden widths differ")
+        if source_last.in_channels != destination.heads[0].in_channels:
+            raise CheckpointCompatibilityError("specialist and family output widths differ")
+        original = {name: tensor.detach().clone() for name, tensor in destination.state_dict().items()}
+        with torch.no_grad():
+            destination.shared.weight.zero_()
+            perception_channels = source.channels * 5
+            destination.shared.weight[:, :perception_channels].copy_(source_first.weight[:, :perception_channels])
+            if source.context_channels:
+                destination.shared.weight[
+                    :, perception_channels : perception_channels + source.context_channels
+                ].copy_(source_first.weight[:, perception_channels : perception_channels + source.context_channels])
+            destination.shared.bias.copy_(source_first.bias)
+            for film in destination.film:
+                film.weight.zero_()
+                film.bias.zero_()
+            for head in destination.heads:
+                head.weight.copy_(source_last.weight)
+                head.bias.copy_(source_last.bias)
+        if verify:
+            try:
+                _verify_specialist_conversion(source, destination)
+            except Exception:
+                destination.load_state_dict(original)
+                raise
+        return destination
 
     source_state, destination_state = source.state_dict(), destination.state_dict()
     if set(source_state) != set(destination_state):

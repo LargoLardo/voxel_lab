@@ -17,8 +17,8 @@ from .ecology.environment import EcologyWorld
 from .ecology.metrics import ecology_metrics
 from .ecology.router import ModelRouter
 from .ecology.simulator import ProceduralEcologyBaseline, ecology_step
-from .genomes import MORPHOLOGIES, TreeGenome, one_hot_genomes, tree_genome_tensor
-from .model_3d import NeuralCA3D
+from .genomes import MORPHOLOGIES, TREE_FAMILIES, TreeGenome, one_hot_genomes, tree_genome_tensor
+from .model_3d import NeuralCA3D, TreeFamilyNCA3D
 from .random_utils import resolve_device
 from .state import StateLayout
 from .utils import create_run_directory, metadata, steps_per_second, write_json, write_live_preview
@@ -94,12 +94,11 @@ def main() -> None:
     elif config.get("procedural_baseline"):
         model = ModelRouter(ProceduralEcologyBaseline())
     else:
-        shared_model = NeuralCA3D(
-            layout.channels,
-            int(config.get("model_width", 32)),
-            genome_size,
-            float(config.get("fire_rate", 0.5)),
-            context_channels,
+        model_type = TreeFamilyNCA3D if semantic_tree_genomes else NeuralCA3D
+        extra = (len(TREE_FAMILIES),) if semantic_tree_genomes else ()
+        shared_model = model_type(
+            layout.channels, int(config.get("model_width", 32)), genome_size,
+            float(config.get("fire_rate", 0.5)), context_channels, *extra,
         ).to(device).eval()
         if config.get("checkpoint"):
             expected_kind = str(config.get(

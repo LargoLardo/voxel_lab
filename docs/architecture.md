@@ -32,7 +32,7 @@ The model boundary is:
 next_state = NCA(perception(cell_state), organism_genome, local_environment)
 ```
 
-Local perception uses fixed spatial filters. Genome values are broadcast because they belong to the whole organism. Spatial environment values remain fields rather than being hidden inside the genome. The update network proposes a residual delta, stochastic fire-rate masking makes updates asynchronous, and the before/after living-mask intersection clears every channel of cells that are no longer locally alive.
+Local perception uses fixed spatial filters. The family model applies continuous genes through family-specific FiLM modulation and uses a small output head per discrete family; spatial environment values remain fields rather than being hidden inside the genome. The update network proposes a residual delta, stochastic fire-rate masking makes updates asynchronous, and the before/after living-mask intersection clears every channel of cells that are no longer locally alive.
 
 In the ecology implementation, per-organism energy is maintained by the world and supplied through local context; the ordinary tree-training state contains occupancy, material, and hidden channels. The separation is semantic even where storage differs.
 
@@ -40,13 +40,13 @@ In the ecology implementation, per-organism energy is maintained by the world an
 
 | Specialist | Continuous family |
 | --- | --- |
-| No genome input | 16-value model genome: 4-family one-hot, 10 semantic genes, 2 deterministic style features |
+| No genome input | 15-value model genome: 4-family one-hot, 9 semantic genes, 2 deterministic style features |
 | One target and one default tree genome | Many deterministic genome-conditioned targets |
 | Easier to stabilize and diagnose | Compact shared rule for variation and interpolation |
 | Independent capacity and training schedule | Shared capacity can create interference between organisms |
 | Best first step for a new organism | Best after a reliable specialist exists |
 
-`tree_family.yaml` initializes from `runs/tree_specialist/checkpoints/best.pt`. The conversion copies compatible perception/update weights, expands the first update layer, and initializes new genome/environment weights so the default family initially behaves like the specialist. Checkpoint metadata records model kind and input schemas; mismatched tensor shapes are an error.
+`tree_family.yaml` initializes from `runs/tree_specialist/checkpoints/best.pt`. The conversion copies the specialist perception rule into the shared backbone, copies its output rule into all four family heads, and zero-initializes FiLM so every family initially behaves like the specialist. Checkpoint metadata records model kind and input schemas; mismatched tensor shapes are an error.
 
 Separate specialist checkpoints remain useful. Ecology's model router groups organisms by checkpoint and sends each group through its assigned model. This permits shared-family and separate-model studies without combining their cellular states or identities.
 
@@ -54,7 +54,7 @@ Separate specialist checkpoints remain useful. Ecology's model router groups org
 
 The legacy conditional model uses four one-hot labels (`branching`, `conical`, `radial`, and `mushroom`). Those vectors select classes. Their midpoint is only a soft combination of labels, and the legacy training distribution did not assign that midpoint a target or an interpretable meaning.
 
-The tree genome retains a discrete family for discontinuous topology (`branching`, `conifer`, `broad_canopy`, or `weeping`) and provides ten continuous genes in `[-1, 1]`:
+The tree genome retains a discrete family for discontinuous topology (`branching`, `conifer`, `broad_canopy`, or `weeping`) and provides nine continuous genes in `[-1, 1]`:
 
 - height
 - trunk thickness
@@ -62,12 +62,13 @@ The tree genome retains a discrete family for discontinuous topology (`branching
 - branch inclination
 - branch length
 - canopy spread
-- taper
 - asymmetry
 - light tropism
 - root/canopy allocation
 
 The style seed is selected once and deterministically encoded as two model features. It is not the per-step fire-mask seed. Identical genome JSON and target conditions reproduce the same procedural target; simulation fire masks can still produce different rollouts.
+
+Taper was removed because its effect was nearly invisible at the shipped voxel resolution. Light tropism remains in the schema but is fixed at zero during family and regeneration training; it is varied only during directional-light environment training.
 
 Interpolation is defined only between genomes in the same discrete family. Mutation is bounded and can lock selected genes. These operations become meaningful only because training generates the matching procedural target for each sampled genome.
 
@@ -82,11 +83,11 @@ Family training keeps these items paired in every state-pool slot:
 - fixed style seed
 - target occupancy and materials
 - environment specification and local context
-- creation method (`random`, `interpolation`, or `mutation`)
+- counterfactual family/gene condition and pair identity
 
-The curriculum starts with all four families balanced in a narrow continuous-gene region, widens the gene range, introduces within-family interpolation, and adds bounded mutation while keeping the environment fixed. Environment variation is reserved for the later environment stage so the first shared model must learn genome separation without a second moving condition. Continued states are compared directly with their own target after randomized persistence horizons. Dead and worst pool samples are reseeded; mature low-loss samples can be damaged only when damage leaves a living remnant.
+Every family batch contains adjacent low/high pairs with the same seed, style, environment, and per-step fire mask while exactly one gene changes. The pool is stratified by family and gene and cycles through conditions, so an easy condition cannot continually evict a hard one. The gene range widens while the environment remains fixed. Continued states are compared directly with their own target after randomized persistence horizons. Dead pairs are reseeded together; mature pairs receive the same damage geometry only when a living remnant survives.
 
-`tree_regeneration.yaml` resumes the full-range family checkpoint and applies damage throughout its curriculum. `tree_environment.yaml` resumes that exact architecture and introduces randomized environments from the beginning. `resume` is appropriate only when all model dimensions match; specialist-to-family expansion uses `initialize_from_specialist` instead.
+`tree_regeneration.yaml` resumes the full-range family checkpoint and applies damage throughout its curriculum. `tree_environment.yaml` resumes that exact architecture, resets the pool to include light-tropism strata, and introduces randomized environments from the beginning. `resume` is appropriate only when all model dimensions match; specialist-to-family expansion uses `initialize_from_specialist` instead.
 
 ## Stability and checkpoint selection
 
@@ -96,6 +97,9 @@ Training loss covers:
 - growth outside the target
 - raw occupancy outside `[0, 1]`
 - excessive occupancy, material, and hidden-channel magnitude
+- soft Dice/IoU and distance-weighted outside growth
+- height, width, volume, centroid, and branch-material distribution
+- signed low/high counterfactual target change for each gene
 - direct long-horizon continuation error
 
 Finite training loss is necessary but not sufficient. The deterministic validation panel crosses default, boundary/corner, random, interpolated, mutated, and archived genomes with fixed fire-mask seeds and representative environments. Each trial checks state finiteness and magnitude, occupancy-range violations, connectedness, size/shape descriptors, target agreement, drift, and damage recovery.
@@ -167,7 +171,7 @@ The legacy `phase*.yaml`, one-hot conditional studies, regeneration evaluator, a
 
 The full tree presets deliberately begin with FP32, `world_size: 16`, `batch_size: 4`, eight hidden channels, and width 64. These are conservative starting settings for a 6 GB RTX 4050 Laptop GPU, not a guarantee for every driver or concurrently loaded application.
 
-The repository's focused CUDA probe used PyTorch 2.13.0+cu126 on an RTX 4050 with 5.997 GiB usable. A width-64, world-16, batch-4 FP32 pass through 48 growth + 32 persistence steps, backward, and Adam remained finite, took 0.943 seconds, and peaked at 878.44 MiB allocated / 1030 MiB reserved. A separate 256-step no-gradient rollout remained finite, took 0.203 seconds, and peaked at 19.05 MiB allocated. Those numbers establish feasibility and memory headroom for one short probe, not end-to-end training duration, convergence, or morphology quality.
+The repository's focused CUDA probe used PyTorch 2.13.0+cu126 on an RTX 4050 with 5.997 GiB usable. The redesigned width-64 family model at batch 8 completed 48 growth + 32 persistence steps, structural/counterfactual losses, backward, clipping, and Adam in 1.059 seconds, peaking at 3088.5 MiB allocated / 3276.0 MiB reserved. The longer regeneration maximum at batch 4 (64 + 96 steps) remained finite at 2994.2 MiB allocated / 3570.0 MiB reserved. Those numbers establish fit for the presets, not end-to-end training duration, convergence, or morphology quality.
 
 - Keep 256–512-step validation in inference/no-gradient mode.
 - At `world_size: 24`, begin with batch size 1 or 2.
@@ -176,14 +180,14 @@ The repository's focused CUDA probe used PyTorch 2.13.0+cu126 on an RTX 4050 wit
 - Close other GPU-heavy applications and verify that PyTorch sees CUDA.
 - Enable mixed precision only after FP32 rollouts remain finite and bounded.
 
-The complete default chain performs 17,000 optimizer iterations before counting the cross-product of genomes, fire seeds, environments, and recovery trials. On an RTX 4050 laptop, treat it as a multi-hour job that may run overnight; cooling, power mode, driver state, and validation-panel size can matter more than nominal GPU model. The `16³`/batch-4 baseline is meant to fit within 6 GB, but concurrent GPU applications can still cause an allocation failure. Smoke runs verify installation in seconds or minutes but cannot establish morphology quality.
+The complete default chain performs 21,000 optimizer iterations before counting the cross-product of genomes, fire seeds, environments, and recovery trials. On an RTX 4050 laptop, treat it as a multi-hour job that may run overnight; cooling, power mode, driver state, and validation-panel size can matter more than nominal GPU model. The `16³` family stage uses batch 8; the longer regeneration/environment horizons use batch 4 to stay within 6 GB. Concurrent GPU applications can still cause an allocation failure. Smoke runs verify installation in seconds or minutes but cannot establish morphology quality.
 
 ## Compatibility and current limits
 
 - Existing specialist and legacy one-hot checkpoints remain viewable when their recorded dimensions match.
 - Old models without context receive no context or an explicit zero/default context path.
 - Checkpoint format, model kind, genome/environment schema versions, target generator version, training ranges, validation panel, and best persistence score are stored where applicable.
-- Procedural-tree target schema version 2 fixes empty thin-trunk targets on even grids; version-1 tree checkpoints are rejected and must be retrained through the pipeline.
+- Procedural-tree target schema version 3 and tree-genome schema version 2 cover the fixed base geometry, redesigned genes, and new family architecture; older tree checkpoints are rejected and must be retrained through the pipeline.
 - Procedural tree targets are stylized voxel organisms, not botanical simulations.
 - Interpolation does not cross discrete topology families.
 - A family model may trade specialist quality for shared capacity.

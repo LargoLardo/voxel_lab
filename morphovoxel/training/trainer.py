@@ -14,10 +14,10 @@ import torch
 from ..checkpointing import CHECKPOINT_FORMAT_VERSION, convert_specialist_to_family, load_checkpoint, save_checkpoint
 from ..config import save_config
 from ..environment import ENVIRONMENT_CHANNELS, ENVIRONMENT_SCHEMA_VERSION, EnvironmentSpec, environment_context_batch
-from ..genomes import MORPHOLOGIES, TREE_FAMILIES, TREE_GENE_SPECS, TREE_GENOME_VERSION, TreeGenome, one_hot_genomes, tree_genome_tensor
+from ..genomes import FAMILY_GENE_NAMES, ENVIRONMENT_GENE_NAMES, MORPHOLOGIES, TREE_FAMILIES, TREE_GENE_SPECS, TREE_GENOME_VERSION, TreeGenome, one_hot_genomes, tree_genome_tensor
 from ..metrics import morphology_metrics, threshold_iou
 from ..model_2d import NeuralCA2D
-from ..model_3d import NeuralCA3D
+from ..model_3d import NeuralCA3D, TreeFamilyNCA3D
 from ..random_utils import resolve_device, seed_everything
 from ..rollout import rollout
 from ..seeding import seed_state
@@ -27,8 +27,8 @@ from ..targets.targets_3d import TREE_TARGET_VERSION
 from ..targets.morphology_library import save_target
 from ..utils import create_run_directory, metadata, steps_per_second, write_json, write_live_preview
 from ..validation import ValidationCriteria, build_candidate_panel, build_validation_panel, validate_panel
-from .losses import morphology_loss
-from .family import curriculum_values, sample_family_data
+from .losses import counterfactual_loss, morphology_loss
+from .family import curriculum_values, sample_counterfactual_family_data
 from .state_pool import StatePool
 
 LOGGER = logging.getLogger(__name__)
@@ -91,7 +91,7 @@ def _restore_pool(saved: dict) -> StatePool:
         name: saved.get(name)
         for name in (
             "target_occupancy", "target_materials", "environments",
-            "environment_specs", "style_seeds",
+            "environment_specs", "style_seeds", "condition_ids", "pair_ids",
         )
     }
     return StatePool(saved["states"], saved["genomes"], saved.get("ages"), **optional)
@@ -127,6 +127,47 @@ def _pool_actions(
     if damage_fraction > 0 and len(candidates) and not damage_count:
         damage_count = 1
     damage = candidates[torch.argsort(errors[candidates])[:damage_count]] if damage_count else torch.empty(0, dtype=torch.long, device=state.device)
+    return reseed, damage
+
+
+def _paired_pool_actions(
+    state: torch.Tensor,
+    target: torch.Tensor,
+    ages: torch.Tensor,
+    fresh_pair_count: int,
+    damage_fraction: float,
+    mature_age: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Cycle reseeding by pair; never let an easy condition evict a hard one."""
+    if len(state) % 2:
+        raise ValueError("counterfactual batches must contain adjacent pairs")
+    living = state[:, 0].flatten(1).amax(1) > 0.1
+    valid_target = target.flatten(1).amax(1) > 0.5
+    entry_error = torch.nan_to_num(
+        (state[:, 0] - target).square().flatten(1).mean(1),
+        nan=float("inf"), posinf=float("inf"), neginf=float("inf"),
+    )
+    pair_error = entry_error.view(-1, 2).amax(1)
+    invalid = (~living | ~valid_target).view(-1, 2).any(1)
+    pair_count = len(state) // 2
+    reseed_pairs = set(range(min(pair_count, max(0, fresh_pair_count))))
+    reseed_pairs.update(torch.nonzero(invalid, as_tuple=False).flatten().tolist())
+    reseed = torch.tensor(
+        [item for pair in sorted(reseed_pairs) for item in (pair * 2, pair * 2 + 1)],
+        dtype=torch.long, device=state.device,
+    )
+    eligible = (ages.view(-1, 2).amin(1) >= mature_age) & living.view(-1, 2).all(1) & valid_target.view(-1, 2).all(1)
+    if reseed_pairs:
+        eligible[list(reseed_pairs)] = False
+    candidates = torch.nonzero(eligible, as_tuple=False).flatten()
+    damage_count = min(len(candidates), round(len(candidates) * max(0.0, min(1.0, damage_fraction))))
+    if damage_fraction > 0 and len(candidates) and not damage_count:
+        damage_count = 1
+    chosen = candidates[torch.argsort(pair_error[candidates])[:damage_count]] if damage_count else candidates[:0]
+    damage = torch.tensor(
+        [item for pair in chosen.tolist() for item in (pair * 2, pair * 2 + 1)],
+        dtype=torch.long, device=state.device,
+    )
     return reseed, damage
 
 
@@ -201,6 +242,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         raise ValueError("model_kind must be specialist, tree_specialist, legacy_conditional, or tree_family")
     tree_family = model_kind == "tree_family"
     tree_specialist = model_kind == "tree_specialist"
+    train_light_tropism = bool(config.get("train_light_tropism", False)) if tree_family else False
     if (tree_family or tree_specialist) and dimensions != 3:
         raise ValueError("tree models require three dimensions")
     if model_kind == "legacy_conditional" and not conditional:
@@ -213,7 +255,11 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     if tree_family:
         config.setdefault(
             "training_genome_ranges",
-            {spec.name: [spec.minimum, spec.maximum] for spec in TREE_GENE_SPECS},
+            {
+                spec.name: [spec.minimum, spec.maximum]
+                if spec.name != "light_tropism" or train_light_tropism else [0.0, 0.0]
+                for spec in TREE_GENE_SPECS
+            },
         )
         config.setdefault("validation_panel", {
             "categories": ["default", "boundary", "random", "interpolation", "mutation", "archive"],
@@ -231,14 +277,17 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     layout = StateLayout(materials=int(config.get("materials", classes)), hidden=int(config.get("hidden_channels", 8)))
     genome_size = TreeGenome.model_size() if tree_family else len(MORPHOLOGIES) if conditional else 0
     context_channels = len(ENVIRONMENT_CHANNELS) if bool(config.get("environment_conditioning", tree_family)) else 0
-    model_class = NeuralCA3D if dimensions == 3 else NeuralCA2D
-    model = model_class(
-        layout.channels,
-        int(config.get("model_width", 32)),
-        genome_size,
-        float(config.get("fire_rate", 0.5)),
-        context_channels,
-    ).to(device)
+    if tree_family:
+        model = TreeFamilyNCA3D(
+            layout.channels, int(config.get("model_width", 32)), genome_size,
+            float(config.get("fire_rate", 0.5)), context_channels, len(TREE_FAMILIES),
+        ).to(device)
+    else:
+        model_class = NeuralCA3D if dimensions == 3 else NeuralCA2D
+        model = model_class(
+            layout.channels, int(config.get("model_width", 32)), genome_size,
+            float(config.get("fire_rate", 0.5)), context_channels,
+        ).to(device)
     initialize_from = config.get("initialize_from_specialist")
     if initialize_from:
         if not tree_family:
@@ -319,17 +368,22 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         pool_size = max(requested_pool_size, batch, len(MORPHOLOGIES))
     else:
         pool_size = max(configured_pool_size, batch) if configured_pool_size else 0
+    active_gene_names = FAMILY_GENE_NAMES + ENVIRONMENT_GENE_NAMES if train_light_tropism else FAMILY_GENE_NAMES
     if tree_family:
+        if batch % 2 or pool_size % 2:
+            raise ValueError("tree-family counterfactual batch_size and pool_size must be even")
         initial = curriculum_values(0, iterations, config)
-        family = sample_family_data(
-            pool_size, size, seed,
+        family = sample_counterfactual_family_data(
+            pool_size // 2, size, seed,
             genome_span=initial["genome_span"],
-            interpolation_fraction=initial["interpolation_fraction"],
-            mutation_fraction=initial["mutation_fraction"],
             environment_span=initial["environment_span"] if context_channels else 0.0,
-            mutation_strength=float(config.get("mutation_strength", 0.15)),
+            active_gene_names=active_gene_names,
         )
-        pool_states = seed_state(pool_size, size, layout, dimensions=dimensions, device="cpu")
+        pool_states = seed_state(
+            pool_size // 2, size, layout, dimensions=dimensions,
+            seed_size=int(config.get("seed_size", 1)), noise=float(config.get("seed_noise", 0)),
+            random_seed=seed, device="cpu",
+        ).repeat_interleave(2, 0)
         pool = StatePool(
             pool_states,
             family.model_genomes,
@@ -338,22 +392,27 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             environments=family.environments,
             environment_specs=family.environment_vectors,
             style_seeds=family.style_seeds,
+            condition_ids=family.condition_ids,
+            pair_ids=family.pair_ids,
         )
     elif pool_size:
         pool_labels = torch.arange(pool_size) % (len(MORPHOLOGIES) if conditional else 1)
         pool_genomes = one_hot_genomes(pool_labels) if conditional else pool_labels[:, None].float()
         pool_states = seed_state(pool_size, size, layout, dimensions=dimensions, device="cpu")
         pool = StatePool(pool_states, pool_genomes)
-    if restored and restored.get("pool"):
+    if restored and restored.get("pool") and not bool(config.get("reset_pool_on_resume", False)):
         initialized_pool = pool
         pool = _restore_pool(restored["pool"])
         if initialized_pool is not None and len(pool.states) < len(initialized_pool.states):
             pool.append_from(initialized_pool, len(pool.states))
         if tree_family and any(getattr(pool, name) is None for name in (
             "target_occupancy", "target_materials", "environments",
-            "environment_specs", "style_seeds",
+            "environment_specs", "style_seeds", "condition_ids", "pair_ids",
         )):
-            raise ValueError("tree-family checkpoint pool is missing paired target/environment/style data")
+            raise ValueError(
+                "tree-family checkpoint pool is missing paired target/environment/style data "
+                "or counterfactual pair identity data"
+            )
     specialist_target = specialist_material = specialist_context = None
     if tree_specialist:
         occupancy, materials = make_tree_target(tree_default, size, environment_default)
@@ -363,9 +422,14 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             specialist_context = environment_context_batch([environment_default] * batch, size, device=device)
     final_state = final_target = final_materials = None
     best_score, last_validation = float("-inf"), None
+    pair_cursor = (start * max(1, batch // 2)) if tree_family else 0
     for step in range(start, start + iterations):
         context = None
-        pool_batch = pool.sample(batch, torch.Generator().manual_seed(seed + step), device) if pool else None
+        if pool and tree_family:
+            pool_batch = pool.sample_stratified_pairs(batch, pair_cursor, device)
+            pair_cursor += batch // 2
+        else:
+            pool_batch = pool.sample(batch, torch.Generator().manual_seed(seed + step), device) if pool else None
         if pool_batch:
             state = pool_batch.states
             if tree_family:
@@ -386,38 +450,43 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 labels = genomes.argmax(1) if conditional else torch.zeros(batch, dtype=torch.long, device=device)
                 target, material = _targets(dimensions, labels, size, seed, conditional, device, config.get("target_kind"))
             fresh_fraction = max(0.0, min(1.0, float(config.get("fresh_fraction", 0.25))))
-            expected_fresh = batch * fresh_fraction
-            fresh = int(expected_fresh) + int(random.random() < expected_fresh % 1)
-            reseed, damage = _pool_actions(
-                state,
-                target,
-                pool_batch.ages,
-                fresh,
-                float(config.get("damage_probability", 0)) if dimensions == 3 else 0.0,
-                int(config.get("damage_min_age", maximum)),
-            )
+            if tree_family:
+                expected_fresh_pairs = batch * fresh_fraction / 2
+                fresh_pairs = int(expected_fresh_pairs) + int(random.random() < expected_fresh_pairs % 1)
+                reseed, damage = _paired_pool_actions(
+                    state, target, pool_batch.ages, fresh_pairs,
+                    float(config.get("damage_probability", 0)), int(config.get("damage_min_age", maximum)),
+                )
+            else:
+                expected_fresh = batch * fresh_fraction
+                fresh = int(expected_fresh) + int(random.random() < expected_fresh % 1)
+                reseed, damage = _pool_actions(
+                    state, target, pool_batch.ages, fresh,
+                    float(config.get("damage_probability", 0)) if dimensions == 3 else 0.0,
+                    int(config.get("damage_min_age", maximum)),
+                )
             if len(reseed):
+                fresh_count = len(reseed) // 2 if tree_family else len(reseed)
                 fresh_states = seed_state(
-                    len(reseed), size, layout, dimensions=dimensions,
+                    fresh_count, size, layout, dimensions=dimensions,
                     seed_size=int(config.get("seed_size", 1)), noise=float(config.get("seed_noise", 0)),
                     random_seed=seed + step, device=device,
                 )
+                if tree_family:
+                    fresh_states = fresh_states.repeat_interleave(2, 0)
                 state[reseed] = fresh_states
                 pool_batch.ages[reseed] = 0
                 if tree_family:
                     curriculum = curriculum_values(step - start, iterations, config)
-                    replacement_families = [
-                        TREE_FAMILIES[int(genomes[index, : len(TREE_FAMILIES)].argmax())]
-                        for index in reseed.tolist()
-                    ]
-                    replacement = sample_family_data(
-                        len(reseed), size, seed + 10_000 + step,
+                    if pool_batch.condition_ids is None or pool_batch.pair_ids is None:
+                        raise ValueError("tree-family counterfactual metadata is missing")
+                    replacement_conditions = pool_batch.condition_ids[reseed][::2].tolist()
+                    replacement = sample_counterfactual_family_data(
+                        len(replacement_conditions), size, seed + 10_000 + step,
                         genome_span=curriculum["genome_span"],
-                        interpolation_fraction=curriculum["interpolation_fraction"],
-                        mutation_fraction=curriculum["mutation_fraction"],
                         environment_span=curriculum["environment_span"] if context_channels else 0.0,
-                        mutation_strength=float(config.get("mutation_strength", 0.15)),
-                        families=replacement_families,
+                        active_gene_names=active_gene_names,
+                        condition_ids=replacement_conditions,
                         device=device,
                     )
                     genomes[reseed] = replacement.model_genomes
@@ -435,18 +504,23 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                         environments=replacement.environments,
                         environment_specs=replacement.environment_vectors,
                         style_seeds=replacement.style_seeds,
+                        condition_ids=pool_batch.condition_ids[reseed],
+                        pair_ids=pool_batch.pair_ids[reseed],
                     )
             if len(damage):
                 from ..damage import damage_3d
-                for index in damage.tolist():
-                    original = state[index : index + 1]
+                groups = damage.view(-1, 2).tolist() if tree_family else [[index] for index in damage.tolist()]
+                for indices in groups:
+                    original = state[indices]
                     damaged, _ = damage_3d(
                         original,
                         random.choice(config.get("damage_severities", [0.1, 0.25, 0.5])),
                         random.choice(config.get("damage_types", ["sphere", "cuboid", "top"])),
-                        seed + step + index,
+                        seed + step + indices[0],
                     )
-                    state[index : index + 1] = _keep_viable_damage(original, damaged)
+                    viable = _keep_viable_damage(original, damaged)
+                    if not tree_family or bool((viable[:, 0].flatten(1).amax(1) > 0.1).all()):
+                        state[indices] = viable
         else:
             state = seed_state(batch, size, layout, dimensions=dimensions, seed_size=int(config.get("seed_size", 1)), noise=float(config.get("seed_noise", 0)), random_seed=seed + step, device=device)
             if tree_family:
@@ -460,20 +534,33 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 target, material = _targets(dimensions, labels, size, seed, conditional, device, config.get("target_kind"))
         steps = random.randint(int(minimum), int(maximum))
         preview_started = time.perf_counter() if preview_image and (step + 1) % 10 == 0 else None
-        final_state, _ = rollout(model, state, steps, genomes, context=context)
+        final_state, _ = rollout(
+            model, state, steps, genomes, context=context, shared_fire_pairs=tree_family,
+        )
         loss, components = morphology_loss(
             final_state, target, material, layout, config.get("loss_weights"), state_limit=state_limit,
         )
+        if tree_family:
+            components["counterfactual"] = counterfactual_loss(final_state, target, layout)
+            loss = loss + float(config.get("counterfactual_weight", 1.0)) * components["counterfactual"]
         persistence_steps = random.randint(persistence_minimum, persistence_maximum)
         committed_state = final_state
         if persistence_steps:
-            committed_state, _ = rollout(model, final_state, persistence_steps, genomes, context=context)
+            committed_state, _ = rollout(
+                model, final_state, persistence_steps, genomes, context=context, shared_fire_pairs=tree_family,
+            )
             persistence_loss, persistence_components = morphology_loss(
                 committed_state, target, material, layout, config.get("loss_weights"), state_limit=state_limit,
             )
             components["persistence"] = persistence_loss
             components.update({f"persistence_{name}": value for name, value in persistence_components.items()})
             loss = loss + float(config.get("persistence_weight", 1.0)) * persistence_loss
+            if tree_family:
+                persistence_counterfactual = counterfactual_loss(committed_state, target, layout)
+                components["persistence_counterfactual"] = persistence_counterfactual
+                loss = loss + float(config.get("persistence_weight", 1.0)) * float(
+                    config.get("counterfactual_weight", 1.0)
+                ) * persistence_counterfactual
         if preview_started is not None:
             total_steps = steps + persistence_steps
             write_live_preview(
@@ -615,7 +702,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 save_checkpoint(
                     run / "checkpoints" / "best.pt", model, optimizer, step=step + 1,
                     scheduler=scheduler, config=config, pool=pool,
-                    genomes=({"schema_version": 1, "default": tree_default.to_dict()} if tree_family else list(MORPHOLOGIES) if conditional else None),
+                    genomes=({"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()} if tree_family else list(MORPHOLOGIES) if conditional else None),
                     validation=best_validation,
                 )
             LOGGER.info("validation step=%d worst_genome_persistence=%.6f", step + 1, worst_score)
@@ -623,7 +710,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     validation_summary = ({**last_validation, "best_worst_genome_persistence_score": best_score} if last_validation else None)
     save_checkpoint(
         checkpoint, model, optimizer, step=start + iterations, scheduler=scheduler, config=config, pool=pool,
-        genomes=({"schema_version": 1, "default": tree_default.to_dict()} if tree_family else list(MORPHOLOGIES) if conditional else None),
+        genomes=({"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()} if tree_family else list(MORPHOLOGIES) if conditional else None),
         validation=validation_summary,
     )
     pd.DataFrame(records).to_csv(run / "logs.csv", index=False)

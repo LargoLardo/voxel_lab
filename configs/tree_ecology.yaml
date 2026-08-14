@@ -22,7 +22,6 @@ tree_genomes:
       branch_inclination: 0.1
       branch_length: 0.25
       canopy_spread: 0.2
-      taper: 0.1
       asymmetry: -0.1
       light_tropism: 0.6
       root_canopy_allocation: 0.0
@@ -35,7 +34,6 @@ tree_genomes:
       branch_inclination: -0.35
       branch_length: -0.1
       canopy_spread: -0.25
-      taper: 0.4
       asymmetry: 0.05
       light_tropism: 0.5
       root_canopy_allocation: -0.1

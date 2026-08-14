@@ -25,10 +25,11 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 import torch
 
 from .config import load_config, save_config
-from .environment import ENVIRONMENT_CHANNELS, ENVIRONMENT_PARAMETERS, EnvironmentSpec
-from .genomes import TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome
+from .environment import ENVIRONMENT_CHANNELS, ENVIRONMENT_PARAMETERS, ENVIRONMENT_SCHEMA_VERSION, EnvironmentSpec
+from .genomes import TREE_FAMILIES, TREE_GENE_SPECS, TREE_GENOME_VERSION, TreeGenome
 from .lab import LabSession, find_checkpoint, list_checkpoints
 from .random_utils import resolve_device
+from .targets.targets_3d import TREE_TARGET_VERSION
 from .variant_archive import VariantArchive
 
 CONFIGS: dict[str, tuple[str, str, str, str]] = {
@@ -134,6 +135,12 @@ def build_state(project_root: Path) -> dict[str, Any]:
             "context_channels",
             run_config.get("context_channels", len(ENVIRONMENT_CHANNELS) if run_config.get("environment_conditioning") else 0),
         ))
+        target_config = run_config.get("target_generator", {})
+        target_config_version = target_config.get("version") if isinstance(target_config, dict) else None
+        tree_schema_compatible = model_kind not in {"tree_specialist", "tree_family"} or (
+            run_metadata.get("genome_schema_version", run_config.get("genome_schema_version")) == TREE_GENOME_VERSION
+            and run_metadata.get("target_generator_version", target_config_version) == TREE_TARGET_VERSION
+        )
         media = [
             {
                 "name": path.name,
@@ -168,6 +175,7 @@ def build_state(project_root: Path) -> dict[str, Any]:
             "lab_ready": (run / "config.yaml").is_file() and find_checkpoint(run) is not None,
             "checkpoints": [path.name for path in list_checkpoints(run)],
             "model_kind": model_kind, "context_channels": context_channels,
+            "tree_schema_compatible": tree_schema_compatible,
         })
     runs.sort(key=lambda item: item["updated"], reverse=True)
     cuda_available = torch.cuda.is_available()
@@ -348,14 +356,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
     server: DashboardServer
 
     def _send(self, body: bytes, content_type: str, status: HTTPStatus = HTTPStatus.OK) -> None:
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            # Browser polling commonly cancels a stale response during refresh.
+            return
 
     def _json(self, value: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
         self._send(json.dumps(value, allow_nan=False).encode(), "application/json; charset=utf-8", status)
@@ -400,11 +412,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json(self.server.lab.voxel_data(source=source))
             elif route.path == "/api/tree/schema":
                 self._json({
-                    "genome_schema_version": 1,
+                    "genome_schema_version": TREE_GENOME_VERSION,
                     "families": list(TREE_FAMILIES),
                     "genes": [spec.__dict__ for spec in TREE_GENE_SPECS],
                     "default_genome": TreeGenome().to_dict(),
-                    "environment_schema_version": 1,
+                    "target_generator_version": TREE_TARGET_VERSION,
+                    "environment_schema_version": ENVIRONMENT_SCHEMA_VERSION,
                     "environment_parameters": list(ENVIRONMENT_PARAMETERS),
                     "environment_channels": list(ENVIRONMENT_CHANNELS),
                     "default_environment": EnvironmentSpec().to_dict(),
@@ -802,7 +815,7 @@ const dependencySpecs={
 'tree_ecology.yaml':{key:'checkpoint',kinds:['environment'],model:'tree_family',context:12,label:'Use environment-trained checkpoint',hint:'Choose the context-conditioned family that should populate the ecology world.'}};
 function yamlText(key){const match=$('#editor').value.match(new RegExp(`^${key}:\\s*([^#\\n]+)`,'m'));return match?match[1].trim():''}
 function setYamlText(key,value){const editor=$('#editor'),pattern=new RegExp(`^${key}:\\s*[^#\\n]*(\\s*(?:#.*)?)$`,'m');editor.value=pattern.test(editor.value)?editor.value.replace(pattern,`${key}: ${value}$1`):editor.value+(`${editor.value.endsWith('\n')?'':'\n'}${key}: ${value}\n`)}
-function syncDependencyCheckpoints(){const spec=kind==='specialist'?null:dependencySpecs[$('#configSelect').value],field=$('#dependencyCheckpointField'),select=$('#dependencyCheckpoint');field.hidden=!spec;if(!spec)return;$('#dependencyCheckpointLabel').textContent=spec.label;const candidates=state.runs.filter(run=>spec.kinds.includes(run.kind)&&run.model_kind===spec.model&&Number(run.context_channels)===spec.context).flatMap(run=>run.checkpoints.map(checkpoint=>({path:`runs/${run.name}/checkpoints/${checkpoint}`,label:`${run.name} · ${checkpoint}`})));const current=yamlText(spec.key);select.innerHTML=candidates.length?candidates.map(item=>`<option value="${esc(item.path)}">${esc(item.label)}</option>`).join(''):'<option value="">No compatible checkpoints found</option>';const chosen=candidates.some(item=>item.path===current)?current:candidates[0]?.path||'';select.value=chosen;if(chosen&&chosen!==current)setYamlText(spec.key,chosen);$('#dependencyCheckpointHint').textContent=candidates.length?spec.hint:`No compatible ${spec.kinds.join(' or ')} checkpoint exists yet. Complete the preceding pipeline stage first.`}
+function syncDependencyCheckpoints(){const spec=kind==='specialist'?null:dependencySpecs[$('#configSelect').value],field=$('#dependencyCheckpointField'),select=$('#dependencyCheckpoint');field.hidden=!spec;if(!spec)return;$('#dependencyCheckpointLabel').textContent=spec.label;const candidates=state.runs.filter(run=>spec.kinds.includes(run.kind)&&run.model_kind===spec.model&&Number(run.context_channels)===spec.context&&run.tree_schema_compatible!==false).flatMap(run=>run.checkpoints.map(checkpoint=>({path:`runs/${run.name}/checkpoints/${checkpoint}`,label:`${run.name} · ${checkpoint}`})));const current=yamlText(spec.key);select.innerHTML=candidates.length?candidates.map(item=>`<option value="${esc(item.path)}">${esc(item.label)}</option>`).join(''):'<option value="">No compatible checkpoints found</option>';const chosen=candidates.some(item=>item.path===current)?current:candidates[0]?.path||'';select.value=chosen;if(chosen&&chosen!==current)setYamlText(spec.key,chosen);$('#dependencyCheckpointHint').textContent=candidates.length?spec.hint:`No compatible ${spec.kinds.join(' or ')} checkpoint exists yet. Complete the preceding pipeline stage first.`}
 function syncEvaluationCheckpoints(){const run=state.runs.find(item=>item.name===$('#evaluationRun').value),select=$('#evaluationCheckpoint'),previous=select.value,items=run?.checkpoints||[];select.innerHTML=items.length?items.map(name=>`<option value="${esc(name)}">${esc(name)}${name==='best.pt'?' · persistence-scored':''}</option>`).join(''):'<option value="">No checkpoints</option>';select.value=items.includes(previous)?previous:items[0]||'';const family=$('#evaluationScope').querySelector('option[value="family"]');family.disabled=run?.model_kind!=='tree_family';if(family.disabled&&$('#evaluationScope').value==='family')$('#evaluationScope').value='specimen';$('#evaluationRunButton').disabled=!items.length}
 function syncEvaluationRuns(){const select=$('#evaluationRun'),previous=select.value,items=state.runs.filter(run=>['tree_specialist','tree_family'].includes(run.model_kind)&&run.checkpoints.length);select.innerHTML=items.length?items.map(run=>`<option value="${esc(run.name)}">${esc(run.name)} · ${esc(prettyName(run.model_kind))}</option>`).join(''):'<option value="">No tree checkpoints found</option>';select.value=items.some(run=>run.name===previous)?previous:items[0]?.name||'';syncEvaluationCheckpoints()}
 function metricExtreme(trials,name,mode='min',field='metrics'){const values=trials.map(trial=>trial[field]?.[name]).filter(value=>Number.isFinite(Number(value))).map(Number);return values.length?(mode==='max'?Math.max(...values):Math.min(...values)):NaN}
@@ -834,7 +847,7 @@ function validationBinding(value){return value?.report?value:value?.validation?.
 function sameJson(left,right){return JSON.stringify(left)===JSON.stringify(right)}
 function renderMorphologyStats(report){const descriptors=report?.mean_descriptors||{},cell=(value,digits=1)=>Number.isFinite(Number(value))?Number(value).toFixed(digits):'—';$('#treeMorphologyStats').innerHTML=`<div class="lab-stat"><b>${cell(report?.score,3)}</b><small>persistence</small></div><div class="lab-stat"><b>${cell(descriptors.height)}</b><small>height</small></div><div class="lab-stat"><b>${cell(descriptors.canopy_spread)}</b><small>canopy spread</small></div><div class="lab-stat"><b>${cell(descriptors.occupied_volume,0)}</b><small>occupied volume</small></div>`}
 function renderValidation(value){const bound=validationBinding(value),report=bound?.report||value?.validation;renderMorphologyStats(report);if(!report){$('#treeValidationStatus').textContent='Validation has not run for this candidate.';$('#treeArchive').disabled=true;return}const failures=Object.keys(report.failures||{}).length,status=report.accepted?'ARCHIVE-ELIGIBLE':report.validated?'REJECTED':'INCOMPLETE',matches=bound&&bound.checkpoint===lab?.checkpoint&&bound.checkpoint_sha256===lab?.checkpoint_sha256&&sameJson(bound.genome,lab?.pending_tree_genome||lab?.active_tree_genome)&&sameJson(bound.environment,lab?.environment||treeSchema?.default_environment);$('#treeValidationStatus').textContent=`${status} · score ${Number(report.score??0).toFixed(3)} · ${report.trials?.length||0} trials${failures?` · ${failures} failed cases`:''}${report.accepted&&!matches?' · candidate changed since validation':''}`;$('#treeArchive').disabled=!report.accepted||!matches;$('#treeArchive').title=$('#treeArchive').disabled?'Validate this exact genome, environment, and checkpoint first':'Save accepted candidate to the Variant Archive'}
-function syncTreePanels(meta,changed){const hasTree=Boolean(meta.active_tree_genome),editable=Boolean(meta.continuous_genome);$('#treeGenomePanel').classList.toggle('lab-hidden',!hasTree);$('#environmentPanel').classList.toggle('lab-hidden',!meta.environment);$('#labModelSummary').innerHTML=`<span>${esc(prettyName(meta.model_kind||'specialist'))}</span><b>${esc(meta.checkpoint||'checkpoint')}</b>`;if(hasTree&&(changed||!treeDirty))setTreeDraft(meta.pending_tree_genome||meta.active_tree_genome,false);setTreeEditingEnabled(editable);updateTreeStatus();if(meta.environment&&(changed||!environmentDirty))setEnvironmentDraft(meta.environment,false);renderValidation(meta.validation)}
+function syncTreePanels(meta,changed){const hasTree=Boolean(meta.active_tree_genome),editable=Boolean(meta.continuous_genome);$('#treeGenomePanel').classList.toggle('lab-hidden',!hasTree);$('#environmentPanel').classList.toggle('lab-hidden',!meta.environment);$('#labModelSummary').innerHTML=`<span>${esc(prettyName(meta.model_kind||'specialist'))}</span><b>${esc(meta.checkpoint||'checkpoint')}</b>`;if(hasTree&&(changed||!treeDirty))setTreeDraft(meta.pending_tree_genome||meta.active_tree_genome,false);setTreeEditingEnabled(editable);if(editable&&!meta.trained_light_tropism){for(const element of document.querySelectorAll('[data-tree-range="light_tropism"],[data-tree-number="light_tropism"],[data-tree-lock="light_tropism"]'))element.disabled=true}updateTreeStatus();if(meta.environment&&(changed||!environmentDirty))setEnvironmentDraft(meta.environment,false);renderValidation(meta.validation)}
 function labSource(){return'organism'}function labTargetMode(){return false}function labEditableSource(){return true}function labView(){return lab?.dimensions===3?$('#labView').value:'plane'}function labVoxelMode(){return lab?.dimensions===3&&labView()==='voxels'}function labLayer(){return lab?.dimensions===3&&!labVoxelMode()?Number($('#labLayer').value):0}
 function syncLabLayer(center=false){const readOnly=labVoxelMode()||!labEditableSource();$('#labTool').disabled=readOnly;$('#labRadius').disabled=!labEditableSource();if(!lab||lab.dimensions!==3)return;const input=$('#labLayer'),voxel=labVoxelMode();input.disabled=voxel;if(voxel){$('#labLayerValue').value='—';return}const count=lab.layers[labView()]||1;input.max=count-1;if(center||Number(input.value)>=count)input.value=Math.floor(count/2);$('#labLayerValue').value=input.value}
 const cubeCorners=[[-.48,-.48,-.48],[.48,-.48,-.48],[.48,.48,-.48],[-.48,.48,-.48],[-.48,-.48,.48],[.48,-.48,.48],[.48,.48,.48],[-.48,.48,.48]],cubeFaces=[[[4,5,6,7],[0,0,1]],[[0,3,2,1],[0,0,-1]],[[1,2,6,5],[1,0,0]],[[0,4,7,3],[-1,0,0]],[[3,7,6,2],[0,1,0]],[[0,1,5,4],[0,-1,0]]],voxelHues=[155,78,205,35,330,190];

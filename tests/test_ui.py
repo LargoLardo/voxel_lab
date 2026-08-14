@@ -13,7 +13,7 @@ from morphovoxel.environment import ENVIRONMENT_CHANNELS, EnvironmentSpec
 from morphovoxel.genomes import TreeGenome
 from morphovoxel.state import StateLayout
 from morphovoxel.targets import make_tree_target
-from morphovoxel.ui import CONFIGS, _inside, _launch, build_state, create_server
+from morphovoxel.ui import CONFIGS, DashboardHandler, _inside, _launch, build_state, create_server
 from morphovoxel.utils import steps_per_second, write_live_preview
 from morphovoxel.validation import ValidationCase, ValidationCriteria, ValidationReport, ValidationTrial
 
@@ -22,6 +22,20 @@ def test_step_rate_uses_completed_updates(monkeypatch):
     monkeypatch.setattr("morphovoxel.utils.time.perf_counter", lambda: 12.0)
     assert steps_per_second(24, 10.0) == 12.0
     assert steps_per_second(0, 10.0) == 0.0
+
+
+def test_response_ignores_a_browser_disconnect():
+    class ClosedClient:
+        send_response = send_header = end_headers = lambda *args: None
+
+        class Stream:
+            @staticmethod
+            def write(_body):
+                raise ConnectionAbortedError(10053, "client canceled request")
+
+        wfile = Stream()
+
+    DashboardHandler._send(ClosedClient(), b"stale poll", "application/json")
 
 
 def test_live_preview_drops_locked_metadata_instead_of_crashing(tmp_path, monkeypatch):

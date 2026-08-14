@@ -16,9 +16,9 @@ from PIL import Image
 from .checkpointing import load_model_payload
 from .config import load_config
 from .environment import ENVIRONMENT_CHANNELS, EnvironmentSpec, environment_context_batch
-from .genomes import MORPHOLOGIES, TreeGenome, one_hot_genomes, tree_genome_tensor
+from .genomes import MORPHOLOGIES, TREE_FAMILIES, TreeGenome, one_hot_genomes, tree_genome_tensor
 from .model_2d import NeuralCA2D
-from .model_3d import NeuralCA3D
+from .model_3d import NeuralCA3D, TreeFamilyNCA3D
 from .random_utils import resolve_device
 from .seeding import seed_state
 from .state import StateLayout
@@ -124,14 +124,17 @@ class LabSession:
             raise ValueError("continuous tree-family checkpoints require a 3D run")
         genome_size = TreeGenome.model_size() if continuous else len(MORPHOLOGIES) if conditional else 0
         context_channels = len(ENVIRONMENT_CHANNELS) if bool(config.get("environment_conditioning", continuous)) else 0
-        model_class = NeuralCA2D if dimensions == 2 else NeuralCA3D
-        model = model_class(
-            layout.channels,
-            int(config.get("model_width", 32)),
-            genome_size,
-            float(config.get("fire_rate", 0.5)),
-            context_channels,
-        ).to(device).eval()
+        if continuous:
+            model = TreeFamilyNCA3D(
+                layout.channels, int(config.get("model_width", 32)), genome_size,
+                float(config.get("fire_rate", 0.5)), context_channels, len(TREE_FAMILIES),
+            ).to(device).eval()
+        else:
+            model_class = NeuralCA2D if dimensions == 2 else NeuralCA3D
+            model = model_class(
+                layout.channels, int(config.get("model_width", 32)), genome_size,
+                float(config.get("fire_rate", 0.5)), context_channels,
+            ).to(device).eval()
         # Keep optimizer/pool tensors off the GPU; load_state_dict copies model weights.
         checkpoint_sha256 = _load_model_weights(checkpoint, model, model_kind)
         size = int(config.get("world_size", 32 if dimensions == 2 else 16))
@@ -209,6 +212,7 @@ class LabSession:
             "model_kind": self.model_kind, "checkpoint": self.checkpoint_name,
             "checkpoint_sha256": self.checkpoint_sha256,
             "continuous_genome": self.model_kind == "tree_family",
+            "trained_light_tropism": bool(self.config.get("train_light_tropism", False)),
             "genomes": list(MORPHOLOGIES) if self.conditional and self.model_kind != "tree_family" else [],
             "genome": self.genome_index, "steps": self.steps,
             "steps_per_second": self.rate, "occupied_cells": occupied,

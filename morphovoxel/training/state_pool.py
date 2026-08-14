@@ -17,6 +17,8 @@ class PoolBatch:
     environments: torch.Tensor | None = None
     environment_specs: torch.Tensor | None = None
     style_seeds: torch.Tensor | None = None
+    condition_ids: torch.Tensor | None = None
+    pair_ids: torch.Tensor | None = None
 
 
 class StatePool:
@@ -31,6 +33,8 @@ class StatePool:
         environments: torch.Tensor | None = None,
         environment_specs: torch.Tensor | None = None,
         style_seeds: torch.Tensor | None = None,
+        condition_ids: torch.Tensor | None = None,
+        pair_ids: torch.Tensor | None = None,
     ):
         paired = {
             "genome": genomes,
@@ -40,6 +44,8 @@ class StatePool:
             "environment": environments,
             "environment specification": environment_specs,
             "style seed": style_seeds,
+            "condition id": condition_ids,
+            "pair id": pair_ids,
         }
         for name, value in paired.items():
             if value is not None and len(value) != len(states):
@@ -52,6 +58,8 @@ class StatePool:
         self.environments = self._copy(environments)
         self.environment_specs = self._copy(environment_specs)
         self.style_seeds = self._copy(style_seeds)
+        self.condition_ids = self._copy(condition_ids)
+        self.pair_ids = self._copy(pair_ids)
 
     @staticmethod
     def _copy(value: torch.Tensor | None) -> torch.Tensor | None:
@@ -75,6 +83,33 @@ class StatePool:
             self._sample(self.environments, indices, device),
             self._sample(self.environment_specs, indices, device),
             self._sample(self.style_seeds, indices, device),
+            self._sample(self.condition_ids, indices, device),
+            self._sample(self.pair_ids, indices, device),
+        )
+
+    def sample_stratified_pairs(self, count: int, cursor: int, device: str | torch.device = "cpu") -> PoolBatch:
+        """Cycle through adjacent counterfactual pairs instead of global random eviction."""
+        if count < 2 or count % 2 or count > len(self.states) or self.pair_ids is None or self.condition_ids is None:
+            raise ValueError("stratified pair sampling needs an even count and paired pool metadata")
+        groups: list[tuple[int, int, torch.Tensor]] = []
+        for pair_id in self.pair_ids.unique(sorted=True).tolist():
+            indices = torch.nonzero(self.pair_ids == pair_id, as_tuple=False).flatten()
+            if len(indices) != 2:
+                raise ValueError("each counterfactual pair must contain exactly two states")
+            conditions = self.condition_ids[indices]
+            if not bool((conditions == conditions[0]).all()):
+                raise ValueError("counterfactual pair condition ids disagree")
+            groups.append((int(conditions[0]), int(pair_id), indices))
+        groups.sort(key=lambda value: (value[0], value[1]))
+        pair_count = count // 2
+        selected = [groups[(cursor + offset) % len(groups)][2] for offset in range(pair_count)]
+        indices = torch.cat(selected)
+        return PoolBatch(
+            indices.to(device), self.states[indices].to(device), self.genomes[indices].to(device), self.ages[indices].to(device),
+            self._sample(self.target_occupancy, indices, device), self._sample(self.target_materials, indices, device),
+            self._sample(self.environments, indices, device), self._sample(self.environment_specs, indices, device),
+            self._sample(self.style_seeds, indices, device), self._sample(self.condition_ids, indices, device),
+            self._sample(self.pair_ids, indices, device),
         )
 
     def commit(self, batch: PoolBatch, states: torch.Tensor, elapsed: int) -> None:
@@ -95,6 +130,8 @@ class StatePool:
         environments: torch.Tensor | None = None,
         environment_specs: torch.Tensor | None = None,
         style_seeds: torch.Tensor | None = None,
+        condition_ids: torch.Tensor | None = None,
+        pair_ids: torch.Tensor | None = None,
     ) -> None:
         """Replace complete organism identities without breaking pool pairing."""
         indices = indices.detach().cpu()
@@ -107,6 +144,8 @@ class StatePool:
             "environments": environments,
             "environment_specs": environment_specs,
             "style_seeds": style_seeds,
+            "condition_ids": condition_ids,
+            "pair_ids": pair_ids,
         }
         for name, value in values.items():
             current = getattr(self, name)
@@ -126,6 +165,7 @@ class StatePool:
         names = (
             "states", "genomes", "ages", "target_occupancy", "target_materials",
             "environments", "environment_specs", "style_seeds",
+            "condition_ids", "pair_ids",
         )
         if not 0 <= start <= len(other.states):
             raise ValueError("pool append start is out of range")
@@ -147,5 +187,7 @@ class StatePool:
             "environments": self.environments,
             "environment_specs": self.environment_specs,
             "style_seeds": self.style_seeds,
+            "condition_ids": self.condition_ids,
+            "pair_ids": self.pair_ids,
         }
         return {name: value for name, value in values.items() if value is not None}

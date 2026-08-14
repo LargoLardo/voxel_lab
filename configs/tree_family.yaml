@@ -8,18 +8,20 @@ specialist_context_channels: 0
 seed: 42
 device: auto
 world_size: 16
-batch_size: 4
+batch_size: 8
 materials: 4
 hidden_channels: 8
 model_width: 64
 fire_rate: 0.5
-iterations: 4000
+iterations: 8000
 rollout_steps: [24, 48]
 pool_size: 64
 fresh_fraction: 0.25
-learning_rate: 0.001
+learning_rate: 0.0005
 state_limit: 4.0
-loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 1.0, magnitude: 0.001}
+loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 1.0, magnitude: 0.001, soft_dice: 1.0, soft_iou: 0.5, distance: 0.5, height: 0.25, width: 0.25, volume: 0.5, centroid: 0.25, branch_distribution: 0.25}
+counterfactual_weight: 1.0
+train_light_tropism: false
 persistence_steps: [16, 32]
 persistence_weight: 1.0
 initial_genome_span: 0.15

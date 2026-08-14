@@ -9,7 +9,7 @@ from ..environment import ENVIRONMENT_CHANNELS, EnvironmentSpec, make_environmen
 from ..genomes import TreeGenome
 
 TARGETS_3D = ("branching", "conical", "radial", "mushroom", "dome")
-TREE_TARGET_VERSION = 2
+TREE_TARGET_VERSION = 3
 
 
 def _ball(mask: np.ndarray, z: float, y: float, x: float, radius: float) -> None:
@@ -125,7 +125,9 @@ def make_tree_target(
         environment.light_direction_x * tropism * size * 0.12 - environment.wind_direction_x * environment.wind_strength * size * 0.08,
     ))
     top = center + np.array((-height, 0.0, 0.0)) + lean
-    taper = 0.25 + 0.65 * _normalized(genome, "taper")
+    # Taper was removed from the genome because its rasterized effect was
+    # nearly invisible at 16^3. Keep one stable geometric value instead.
+    taper = 0.55
     for fraction in np.linspace(0, 1, max(4, int(height * 2))):
         point = center + (top - center) * fraction
         _ball(trunk, *point, max(0.55, thickness * (1 - taper * fraction * 0.72)))
@@ -164,10 +166,13 @@ def make_tree_target(
         angle += tropism * 0.22 * math.sin(directional - angle)
         side_bias = 1 + asymmetry * 0.32 * math.cos(angle - family_angle)
         length = base_length * family_scale * side_bias * (1 + 0.12 * math.cos(style_phase + branch_offset * 2.3))
-        rise = -length * (0.28 + inclination * 0.22)
+        rise = -length * (0.30 + inclination * 0.32)
         if genome.family == "weeping":
             rise = -length * 0.12
         end = start + np.array((rise, math.sin(angle) * length, math.cos(angle) * length))
+        # Give asymmetry a direct signed spatial meaning instead of relying on
+        # subtle branch-length weighting that vanished after voxelization.
+        end += np.array((0.0, math.sin(family_angle), math.cos(family_angle))) * asymmetry * size * 0.08
         _segment(branches, tuple(start), tuple(end), max(0.5, thickness * 0.55))
         if genome.family == "weeping":
             droop = end + np.array((length * (0.6 + 0.35 * _normalized(genome, "branch_inclination")), 0, 0))

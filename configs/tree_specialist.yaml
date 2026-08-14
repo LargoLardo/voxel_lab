@@ -17,7 +17,7 @@ pool_size: 64
 fresh_fraction: 0.25
 learning_rate: 0.001
 state_limit: 4.0
-loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 1.0, magnitude: 0.001}
+loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 1.0, magnitude: 0.001, soft_dice: 1.0, soft_iou: 0.5, distance: 0.5, height: 0.25, width: 0.25, volume: 0.5, centroid: 0.25, branch_distribution: 0.25}
 persistence_steps: [16, 32]
 persistence_weight: 1.0
 validation_steps: 256

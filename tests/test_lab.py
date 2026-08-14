@@ -8,10 +8,10 @@ import pytest
 from morphovoxel.checkpointing import CheckpointCompatibilityError, save_checkpoint
 from morphovoxel.config import save_config
 from morphovoxel.environment import ENVIRONMENT_CHANNELS, EnvironmentSpec
-from morphovoxel.genomes import MORPHOLOGIES, TreeGenome
+from morphovoxel.genomes import MORPHOLOGIES, TREE_FAMILIES, TREE_GENOME_VERSION, TreeGenome
 from morphovoxel.lab import LabSession, find_checkpoint
 from morphovoxel.model_2d import NeuralCA2D
-from morphovoxel.model_3d import NeuralCA3D
+from morphovoxel.model_3d import NeuralCA3D, TreeFamilyNCA3D
 from morphovoxel.state import StateLayout
 from morphovoxel.targets import make_tree_target
 from morphovoxel.ui import build_state, create_server
@@ -45,7 +45,9 @@ def _saved_tree_family(root):
     }
     save_config(config, run / "config.yaml")
     layout = StateLayout(4, 2)
-    model = NeuralCA3D(layout.channels, 4, TreeGenome.model_size(), 1.0, len(ENVIRONMENT_CHANNELS))
+    model = TreeFamilyNCA3D(
+        layout.channels, 4, TreeGenome.model_size(), 1.0, len(ENVIRONMENT_CHANNELS), len(TREE_FAMILIES),
+    )
     save_checkpoint(run / "checkpoints" / "latest.pt", model, config=config)
     return run
 
@@ -202,7 +204,8 @@ def test_tree_genome_lab_http_schema_and_actions(tmp_path):
 
     try:
         schema = json.load(urlopen(f"http://127.0.0.1:{server.server_port}/api/tree/schema", timeout=10))
-        assert len(schema["genes"]) == 10 and len(schema["environment_channels"]) == 12
+        assert len(schema["genes"]) == 9 and len(schema["environment_channels"]) == 12
+        assert schema["genome_schema_version"] == TREE_GENOME_VERSION
         loaded = post(run=run.name, device="cpu")
         randomized = post(action="tree_random", seed=12, locked=["height"])
         assert randomized["genome_pending"] and randomized["pending_tree_genome"]["genes"]["height"] == loaded["active_tree_genome"]["genes"]["height"]

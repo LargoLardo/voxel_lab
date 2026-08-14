@@ -22,7 +22,7 @@ def test_tree_genomes_make_distinct_reproducible_semantic_targets():
 @pytest.mark.parametrize("size", (12, 16))
 @pytest.mark.parametrize("family", TREE_FAMILIES)
 def test_thinnest_tree_target_contains_its_planted_base(family, size):
-    genome = TreeGenome(family=family).with_values({"trunk_thickness": -1, "taper": 1})
+    genome = TreeGenome(family=family).with_values({"trunk_thickness": -1})
     occupancy, materials = make_tree_target(
         genome,
         size,

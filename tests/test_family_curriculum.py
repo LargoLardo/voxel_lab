@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from morphovoxel.checkpointing import CheckpointCompatibilityError, save_checkpoint
-from morphovoxel.genomes import TREE_FAMILIES, TreeGenome
+from morphovoxel.genomes import TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome
 from morphovoxel.model_3d import NeuralCA3D
 from morphovoxel.state import StateLayout
 from morphovoxel.training.family import curriculum_values, sample_family_data
@@ -69,7 +69,7 @@ def test_family_replacements_can_preserve_pool_family_balance():
 
 
 def test_parent_mutations_reflect_instead_of_clipping_to_gene_limits():
-    parent = TreeGenome(family="branching", genes=(1.0,) * 10)
+    parent = TreeGenome(family="branching", genes=(1.0,) * len(TREE_GENE_SPECS))
     data = sample_family_data(
         8, 16, 40, mutation_fraction=1, interpolation_fraction=0,
         mutation_strength=1, parent=parent,
@@ -86,7 +86,7 @@ def test_tree_family_training_can_initialize_from_specialist_checkpoint(tmp_path
         "run_name": "converted", "runs_root": str(tmp_path),
         "model_kind": "tree_family", "dimensions": 3, "conditional": True,
         "initialize_from_specialist": str(checkpoint), "device": "cpu",
-        "world_size": 16, "batch_size": 1, "pool_size": 2,
+        "world_size": 16, "batch_size": 2, "pool_size": 2,
         "materials": 4, "hidden_channels": 2, "model_width": 8,
         "fire_rate": 1.0, "iterations": 1, "rollout_steps": 1,
         "persistence_steps": 0, "validation_steps": 0,
