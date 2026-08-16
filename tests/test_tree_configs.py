@@ -53,6 +53,17 @@ def test_tree_presets_form_a_parseable_checkpoint_pipeline():
     assert regeneration["loss_weights"]["occupancy_range"] == 2.0
     assert regeneration["loss_weights"]["magnitude"] == 0.01
 
+    family = configs["tree_family.yaml"]
+    assert family["gradient_accumulation"] is True
+    assert family["gradient_accumulation_steps"] == 4
+    assert family["learning_rate"] == 0.0003
+    assert family["gradient_clip"] == 1.0
+    assert family["loss_weights"]["occupancy_range"] == 2.0
+    assert family["loss_weights"]["magnitude"] == 0.01
+    assert family["validation_every"] == 500
+    assert family["loss_weights"]["branch_dice"] == 1.0
+    assert family["loss_weights"]["leaf_dice"] == 1.0
+
     environment = configs["tree_environment.yaml"]
     assert environment["damage_probability"] == 0.35
     assert environment["damage_min_age"] == 64

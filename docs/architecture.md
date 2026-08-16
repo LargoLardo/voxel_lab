@@ -100,6 +100,10 @@ Training loss covers:
 - soft Dice/IoU and distance-weighted outside growth
 - height, width, volume, centroid, and branch-material distribution
 - signed low/high counterfactual target change for each gene
+- foreground-normalized trunk, branch, and leaf overlap
+- counterfactual normalization over only the voxels changed by the paired targets
+
+Family training can accumulate several paired physical batches before each optimizer update. The YAML switch is `gradient_accumulation`; `gradient_accumulation_steps` controls the count. Logged `iterations` remain optimizer updates, so accumulation trades additional batch compute for a more diverse gradient without increasing the retained autograd graph or physical CUDA batch size.
 - direct long-horizon continuation error
 
 Finite training loss is necessary but not sufficient. The deterministic validation panel crosses default, boundary/corner, random, interpolated, mutated, and archived genomes with fixed fire-mask seeds and representative environments. Each trial checks state finiteness and magnitude, occupancy-range violations, connectedness, size/shape descriptors, target agreement, drift, and damage recovery.

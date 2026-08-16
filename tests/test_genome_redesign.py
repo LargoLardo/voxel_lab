@@ -115,7 +115,8 @@ def test_structural_and_counterfactual_losses_reject_a_blurry_average():
     blurry = exact.clone()
     blurry[:, 0] = 0.5
     weights = {name: 1.0 for name in (
-        "soft_dice", "soft_iou", "distance", "height", "width", "volume", "centroid", "branch_distribution",
+        "soft_dice", "soft_iou", "distance", "height", "width", "volume", "centroid",
+        "trunk_dice", "branch_dice", "leaf_dice",
     )}
     exact_loss, components = morphology_loss(exact, target, materials, layout, weights)
     blurry_loss, _ = morphology_loss(blurry, target, materials, layout, weights)
@@ -123,6 +124,39 @@ def test_structural_and_counterfactual_losses_reject_a_blurry_average():
     assert set(weights) <= set(components)
     assert counterfactual_loss(exact, target, layout) == 0
     assert counterfactual_loss(blurry, target, layout) > 0
+
+
+def test_material_dice_penalizes_each_tree_material_independently():
+    layout = StateLayout(4, 1)
+    target = torch.ones(1, 3, 3, 3)
+    materials = torch.ones_like(target, dtype=torch.long)
+    materials[:, 1] = 2
+    materials[:, 2] = 3
+    exact = torch.zeros(1, layout.channels, 3, 3, 3)
+    exact[:, 0] = target
+    for index in (1, 2, 3):
+        exact[:, layout.material_slice.start + index][materials == index] = 12
+    wrong = exact.clone()
+    wrong[:, layout.material_slice.start + 3] = -12
+    _, exact_components = morphology_loss(exact, target, materials, layout)
+    _, wrong_components = morphology_loss(wrong, target, materials, layout)
+    assert exact_components["trunk_dice"] < 1e-3
+    assert exact_components["branch_dice"] < 1e-3
+    assert exact_components["leaf_dice"] < 1e-3
+    assert wrong_components["leaf_dice"] > exact_components["leaf_dice"]
+
+
+def test_counterfactual_loss_is_not_diluted_by_world_volume():
+    layout = StateLayout(4, 1)
+
+    def loss_for(size):
+        target = torch.zeros(2, size, size, size)
+        target[1, 1, 1, 1] = 1
+        state = torch.zeros(2, layout.channels, size, size, size)
+        return counterfactual_loss(state, target, layout)
+
+    assert torch.equal(loss_for(4), loss_for(16))
+    assert loss_for(4) == 1
 
 
 def test_rollout_reuses_each_fire_mask_within_a_pair():

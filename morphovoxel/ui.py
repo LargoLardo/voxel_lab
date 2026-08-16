@@ -183,6 +183,7 @@ def build_state(project_root: Path) -> dict[str, Any]:
                 for key in (
                     "model_kind", "dimensions", "world_size", "batch_size", "iterations",
                     "rollout_steps", "persistence_steps", "learning_rate", "device",
+                    "gradient_accumulation", "gradient_accumulation_steps",
                 )
                 if key in run_config
             },

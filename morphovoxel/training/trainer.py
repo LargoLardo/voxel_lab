@@ -78,6 +78,16 @@ def _step_range(value, default: tuple[int, int]) -> tuple[int, int]:
     return minimum, maximum
 
 
+def _gradient_accumulation_steps(config: dict) -> int:
+    enabled = config.get("gradient_accumulation", False)
+    value = config.get("gradient_accumulation_steps", 8)
+    if not isinstance(enabled, bool):
+        raise ValueError("gradient_accumulation must be true or false")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError("gradient_accumulation_steps must be a positive integer")
+    return value if enabled else 1
+
+
 def _training_horizons(
     rollout_range: tuple[int, int],
     persistence_range: tuple[int, int],
@@ -391,6 +401,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     write_json(run / "metadata.json", run_metadata)
     records, validation_records = [], []
     iterations = int(config.get("iterations", 10))
+    accumulation_steps = _gradient_accumulation_steps(config)
     minimum, maximum = _step_range(config.get("rollout_steps"), (16, 32) if dimensions == 2 else (8, 16))
     persistence_value = config.get("persistence_steps", config.get("stability_steps", 0))
     persistence_minimum, persistence_maximum = _step_range(persistence_value, (0, 0))
@@ -482,14 +493,21 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             specialist_context = environment_context_batch([environment_default] * batch, size, device=device)
     final_state = final_target = final_materials = None
     best_score, last_validation = float("-inf"), None
-    pair_cursor = (start * max(1, batch // 2)) if tree_family else 0
-    for step in range(start, start + iterations):
+    pair_cursor = (start * accumulation_steps * max(1, batch // 2)) if tree_family else 0
+    for micro_step in range(start * accumulation_steps, (start + iterations) * accumulation_steps):
+        step = micro_step // accumulation_steps
+        accumulation_index = micro_step % accumulation_steps
+        optimizer_update = accumulation_index == accumulation_steps - 1
+        if accumulation_index == 0:
+            optimizer.zero_grad(set_to_none=True)
+            accumulated_loss = 0.0
+            accumulated_components: dict[str, float] = {}
         context = None
         if pool and tree_family:
             pool_batch = pool.sample_stratified_pairs(batch, pair_cursor, device)
             pair_cursor += batch // 2
         else:
-            pool_batch = pool.sample(batch, torch.Generator().manual_seed(seed + step), device) if pool else None
+            pool_batch = pool.sample(batch, torch.Generator().manual_seed(seed + micro_step), device) if pool else None
         if pool_batch:
             state = pool_batch.states
             if tree_family:
@@ -530,7 +548,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 fresh_states = seed_state(
                     fresh_count, size, layout, dimensions=dimensions,
                     seed_size=int(config.get("seed_size", 1)), noise=float(config.get("seed_noise", 0)),
-                    random_seed=seed + step, device=device,
+                    random_seed=seed + micro_step, device=device,
                 )
                 if tree_family:
                     fresh_states = fresh_states.repeat_interleave(2, 0)
@@ -542,7 +560,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                         raise ValueError("tree-family counterfactual metadata is missing")
                     replacement_conditions = pool_batch.condition_ids[reseed][::2].tolist()
                     replacement = sample_counterfactual_family_data(
-                        len(replacement_conditions), size, seed + 10_000 + step,
+                        len(replacement_conditions), size, seed + 10_000 + micro_step,
                         genome_span=curriculum["genome_span"],
                         environment_span=curriculum["environment_span"] if context_channels else 0.0,
                         active_gene_names=active_gene_names,
@@ -576,26 +594,26 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                         original,
                         random.choice(config.get("damage_severities", [0.1, 0.25, 0.5])),
                         random.choice(config.get("damage_types", ["sphere", "cuboid", "top"])),
-                        seed + step + indices[0],
+                        seed + micro_step + indices[0],
                     )
                     viable = _keep_viable_damage(original, damaged)
                     if not tree_family or bool((viable[:, 0].flatten(1).amax(1) > 0.1).all()):
                         state[indices] = viable
         else:
-            state = seed_state(batch, size, layout, dimensions=dimensions, seed_size=int(config.get("seed_size", 1)), noise=float(config.get("seed_noise", 0)), random_seed=seed + step, device=device)
+            state = seed_state(batch, size, layout, dimensions=dimensions, seed_size=int(config.get("seed_size", 1)), noise=float(config.get("seed_noise", 0)), random_seed=seed + micro_step, device=device)
             if tree_family:
                 raise RuntimeError("tree-family training requires its paired state pool")
             if tree_specialist:
                 genomes = None
                 target, material, context = specialist_target, specialist_material, specialist_context
             else:
-                labels = torch.arange(step * batch, (step + 1) * batch, device=device) % (len(MORPHOLOGIES) if conditional else 1)
+                labels = torch.arange(micro_step * batch, (micro_step + 1) * batch, device=device) % (len(MORPHOLOGIES) if conditional else 1)
                 genomes = one_hot_genomes(labels) if conditional else None
                 target, material = _targets(dimensions, labels, size, seed, conditional, device, config.get("target_kind"))
         steps, persistence_steps = _training_horizons(
             (minimum, maximum), (persistence_minimum, persistence_maximum), differentiable_step_limit,
         )
-        preview_started = time.perf_counter() if preview_image and (step + 1) % 10 == 0 else None
+        preview_started = time.perf_counter() if preview_image and optimizer_update and (step + 1) % 10 == 0 else None
         final_state, _ = rollout(
             model, state, steps, genomes, context=context, shared_fire_pairs=tree_family,
         )
@@ -632,24 +650,29 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         if not torch.isfinite(loss):
             save_checkpoint(run / "checkpoints" / "nan.pt", model, optimizer, step=step, config=config)
             raise FloatingPointError(f"non-finite training loss at step {step}")
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), float(config.get("gradient_clip", 1.0)))
-        optimizer.step()
-        if scheduler:
-            scheduler.step()
+        (loss / accumulation_steps).backward()
+        accumulated_loss += float(loss.detach())
+        for name, value in components.items():
+            accumulated_components[name] = accumulated_components.get(name, 0.0) + float(value.detach())
+        if optimizer_update:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), float(config.get("gradient_clip", 1.0)))
+            optimizer.step()
+            if scheduler:
+                scheduler.step()
         if pool and pool_batch:
             pool.commit(pool_batch, committed_state, steps + persistence_steps)
         final_state = committed_state
+        final_target, final_materials = target, material
+        if not optimizer_update:
+            continue
         curriculum_record = curriculum_values(step - start, iterations, config) if tree_family else {}
         records.append({
             "step": step + 1,
-            "loss": float(loss.detach()),
+            "loss": accumulated_loss / accumulation_steps,
             **curriculum_record,
-            **{name: float(value.detach()) for name, value in components.items()},
+            **{name: value / accumulation_steps for name, value in accumulated_components.items()},
         })
-        final_target, final_materials = target, material
-        LOGGER.info("step=%d loss=%.6f", step + 1, float(loss.detach()))
+        LOGGER.info("step=%d loss=%.6f", step + 1, accumulated_loss / accumulation_steps)
         should_validate = validation_steps > 0 and ((step + 1) % validation_every == 0 or step + 1 == start + iterations)
         if should_validate:
             detailed_validation_rows: list[dict[str, object]] | None = None

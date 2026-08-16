@@ -60,14 +60,22 @@ def _shape_components(
 
     predicted = descriptors(occupancy)
     wanted = descriptors(target)
-    branch_probability = material_logits.softmax(1)[:, min(2, material_logits.shape[1] - 1)] * occupancy
-    branch_target = (material_target.to(occupancy.device) == 2).to(occupancy)
-    branch_loss, _ = _soft_overlap(branch_probability, branch_target)
+    material_probabilities = material_logits.softmax(1) * occupancy[:, None]
+    material_target = material_target.to(occupancy.device)
+    semantic_dice = {}
+    for name, index in (("trunk_dice", 1), ("branch_dice", 2), ("leaf_dice", 3)):
+        if index < material_probabilities.shape[1]:
+            semantic_dice[name], _ = _soft_overlap(
+                material_probabilities[:, index], (material_target == index).to(occupancy),
+            )
+    branch_loss = semantic_dice.get("branch_dice", occupancy.sum() * 0)
     return {
         "volume": (predicted[0] - wanted[0]).square().mean(),
         "height": (predicted[1] - wanted[1]).square().mean(),
         "width": (predicted[2] - wanted[2]).square().mean(),
         "centroid": (predicted[3] - wanted[3]).square().mean(),
+        **semantic_dice,
+        # Retain the old metric name for existing logs/configurations.
         "branch_distribution": branch_loss,
     }
 
@@ -108,18 +116,26 @@ def morphology_loss(
     logits = state[:, layout.material_slice].movedim(1, -1)
     components["material"] = F.cross_entropy(logits[occupied], material_target.to(state.device)[occupied]) if occupied.any() else state.sum() * 0
     components.update(_shape_components(occupancy.clamp(0, 1), target, state[:, layout.material_slice], material_target))
-    structural = {"soft_dice", "soft_iou", "distance", "height", "width", "volume", "centroid", "branch_distribution"}
+    structural = {
+        "soft_dice", "soft_iou", "distance", "height", "width", "volume", "centroid",
+        "trunk_dice", "branch_dice", "leaf_dice", "branch_distribution",
+    }
     total = sum(weights.get(name, 0.0 if name in structural else 1.0) * value for name, value in components.items())
     return total, components
 
 
 def counterfactual_loss(state: torch.Tensor, occupancy_target: torch.Tensor, layout: StateLayout) -> torch.Tensor:
-    """Match the signed target change within adjacent low/high gene pairs."""
+    """Match signed target changes without diluting sparse changes over the world."""
     if len(state) < 2 or len(state) % 2 or len(occupancy_target) != len(state):
         raise ValueError("counterfactual loss requires adjacent even-sized pairs")
     occupancy = state[:, layout.occupancy].clamp(0, 1)
     target = occupancy_target.to(occupancy)
-    return F.l1_loss(occupancy[1::2] - occupancy[0::2], target[1::2] - target[0::2])
+    predicted_change = occupancy[1::2] - occupancy[0::2]
+    target_change = target[1::2] - target[0::2]
+    changed = target_change.abs() > 1e-6
+    errors = (predicted_change - target_change).abs().flatten(1)
+    changed = changed.flatten(1)
+    return ((errors * changed).sum(1) / changed.sum(1).clamp_min(1)).mean()
 
 
 def stability_loss(state: torch.Tensor, continued_state: torch.Tensor) -> torch.Tensor:

@@ -26,8 +26,10 @@ damage_min_age: 64
 learning_rate: 0.0003
 gradient_clip: 1.0
 state_limit: 4.0
-loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 2.0, magnitude: 0.01, soft_dice: 1.0, soft_iou: 0.5, distance: 0.5, height: 0.25, width: 0.25, volume: 0.5, centroid: 0.25, branch_distribution: 0.25}
+loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 2.0, magnitude: 0.01, soft_dice: 1.0, soft_iou: 0.5, distance: 0.5, height: 0.25, width: 0.25, volume: 0.5, centroid: 0.25, trunk_dice: 0.5, branch_dice: 1.0, leaf_dice: 1.0}
 counterfactual_weight: 1.0
+gradient_accumulation: false
+gradient_accumulation_steps: 8
 train_light_tropism: true
 reset_pool_on_resume: true
 persistence_steps: [32, 96]
