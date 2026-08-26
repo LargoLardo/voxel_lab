@@ -11,7 +11,7 @@ import torch
 from .damage import damage_3d
 from .environment import ENVIRONMENT_CHANNELS, EnvironmentSpec, environment_context_batch
 from .genomes import TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome, tree_genome_tensor
-from .metrics import connected_components, material_accuracy, morphology_metrics, recovery_metrics, threshold_iou
+from .metrics import connected_components, dice_score, material_accuracy, morphology_metrics, recovery_metrics, threshold_iou
 from .rollout import rollout
 from .seeding import seed_state
 from .state import StateLayout
@@ -412,6 +412,7 @@ def validate_candidate(
     mature_occupancy = mature[0, layout.occupancy]
     recovered_occupancy = recovered[0, layout.occupancy]
     predicted_materials = final[0, layout.material_slice].argmax(0)
+    predicted_body = occupancy > 0.5
     descriptors = _shape_descriptors(occupancy, predicted_materials)
     target_descriptors = _shape_descriptors(target, target_material)
     descriptor_agreements = {
@@ -438,6 +439,8 @@ def validate_candidate(
         **_safe_metric_values(occupancy, target),
         "target_iou": target_iou,
         "material_accuracy": material_score,
+        "branch_dice": dice_score(predicted_body & (predicted_materials == 2), target_material == 2),
+        "leaf_dice": dice_score(predicted_body & (predicted_materials == 3), target_material == 3),
         "volume_agreement": descriptor_agreements["occupied_volume"],
         "height_agreement": descriptor_agreements["height"],
         "canopy_spread_agreement": descriptor_agreements["canopy_spread"],

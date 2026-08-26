@@ -84,6 +84,8 @@ def test_candidate_validation_is_no_grad_reproducible_and_supports_family_or_spe
     second = validate_candidate(model, case, layout=layout, world_size=12, steps=256, recovery_steps=64)
 
     assert first.validated and first.accepted and first.score > 0.9
+    assert first.metrics["branch_dice"] == 1
+    assert first.metrics["leaf_dice"] == 1
     assert first.metrics == second.metrics and first.descriptors == second.descriptors
     assert model.calls[0][0] is expects_genome and model.calls[0][1] is True
     assert model.calls[0][2] == model.calls[calls_per_trial][2]
@@ -148,4 +150,6 @@ def test_panel_aggregation_and_failed_or_short_protocols_are_explicit():
         criteria=ValidationCriteria(min_target_iou=0),
     )
     assert missing_body.metrics["material_accuracy"] == 0
+    assert missing_body.metrics["branch_dice"] == 0
+    assert missing_body.metrics["leaf_dice"] == 0
     assert "material_accuracy_below_minimum" in missing_body.failure_reasons

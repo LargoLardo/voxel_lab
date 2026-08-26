@@ -120,6 +120,17 @@ Install a CUDA-enabled PyTorch wheel using the current command from the [officia
 .venv\Scripts\python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
 ```
 
+## Autoresearch
+
+Run autoresearch only on a dedicated branch. The default campaign is config-only: Codex may edit `configs/autoresearch_candidate.yaml`, while targets, validation, metrics, benchmark seeds, the runner, and tests remain frozen. Each trial gets a unique ignored run directory; improved candidates are committed and worse/crashed/timed-out candidates are restored while their records and logs remain under `runs/autoresearch/`.
+
+```powershell
+git switch feature/autoresearch-loop
+.venv\Scripts\python -m morphovoxel.autoresearch --hours 8
+```
+
+Use `--dry-run` to verify the branch, candidate, CUDA baseline checkpoint, edit scope, and budgets without training. Use `--manual` to initialize the frozen baseline and then follow `autoresearch/program.md` with an already-open Codex Goal-mode session. After the config-only score proves useful, `--scope expanded` additionally permits `model_3d.py`, `training/losses.py`, and `training/family.py`; it still cannot edit evaluation or targets.
+
 ## Legacy presets
 
 The older `phase1_2d.yaml` through `phase5_ecology.yaml`, conditional one-hot experiments, regeneration sweeps, and `ecology_experiments.yaml` are retained for checkpoint compatibility and comparison. They are legacy workflows and are not prerequisites for the tree pipeline. Their smoke variants remain available at the end of the dashboard preset list.
