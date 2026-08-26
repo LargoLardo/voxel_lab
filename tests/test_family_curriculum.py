@@ -59,6 +59,17 @@ def test_family_samples_have_nonempty_targets():
     assert bool((occupied_cells > 0).all())
 
 
+def test_counterfactual_samples_enforce_minimum_positive_branch_and_leaf_masks():
+    from morphovoxel.training.family import sample_counterfactual_family_data
+
+    data = sample_counterfactual_family_data(
+        32, 16, 31, minimum_branch_voxels=8, minimum_leaf_voxels=8,
+    )
+    for material, minimum in ((2, 8), (3, 8)):
+        counts = torch.count_nonzero(data.target_materials == material, dim=(1, 2, 3))
+        assert bool(((counts == 0) | (counts >= minimum)).all())
+
+
 def test_family_replacements_can_preserve_pool_family_balance():
     requested = list(TREE_FAMILIES)
     data = sample_family_data(

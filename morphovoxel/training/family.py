@@ -36,11 +36,23 @@ def _pack_family_data(
     *,
     condition_ids: Sequence[int] | None = None,
     pair_ids: Sequence[int] | None = None,
+    minimum_branch_voxels: int = 1,
+    minimum_leaf_voxels: int = 1,
 ) -> FamilyData:
     targets = [make_tree_target(genome, size, environment) for genome, environment in zip(genomes, environments)]
     empty = [index for index, (occupancy, _) in enumerate(targets) if not np.asarray(occupancy).any()]
     if empty:
         raise RuntimeError(f"tree target invariant violated: occupancy is empty for sample indices {', '.join(map(str, empty))}")
+    for material_index, name, minimum in (
+        (2, "branch", minimum_branch_voxels), (3, "leaf", minimum_leaf_voxels),
+    ):
+        counts = [int(np.count_nonzero(materials == material_index)) for _, materials in targets]
+        undersized = [index for index, count in enumerate(counts) if 0 < count < minimum]
+        if undersized:
+            raise RuntimeError(
+                f"tree target invariant violated: positive {name} masks need at least {minimum} voxels "
+                f"for sample indices {', '.join(map(str, undersized))}"
+            )
     occupancy, materials = zip(*targets)
     count = len(genomes)
     return FamilyData(
@@ -102,6 +114,8 @@ def sample_family_data(
     parent: TreeGenome | None = None,
     families: Sequence[str] | None = None,
     train_light_tropism: bool = False,
+    minimum_branch_voxels: int = 1,
+    minimum_leaf_voxels: int = 1,
     device: torch.device | str = "cpu",
 ) -> FamilyData:
     """Sample paired genomes, targets, environments, and exact style seeds."""
@@ -149,7 +163,11 @@ def sample_family_data(
         environment = EnvironmentSpec.random(int(rng.integers(0, 2**31)), span=environment_span) if environment_span else EnvironmentSpec()
         genomes.append(genome)
         environments.append(environment)
-    return _pack_family_data(genomes, environments, methods, size, device)
+    return _pack_family_data(
+        genomes, environments, methods, size, device,
+        minimum_branch_voxels=minimum_branch_voxels,
+        minimum_leaf_voxels=minimum_leaf_voxels,
+    )
 
 
 def sample_counterfactual_family_data(
@@ -162,6 +180,8 @@ def sample_counterfactual_family_data(
     active_gene_names: Sequence[str] = FAMILY_GENE_NAMES,
     condition_ids: Sequence[int] | None = None,
     pair_id_start: int = 0,
+    minimum_branch_voxels: int = 1,
+    minimum_leaf_voxels: int = 1,
     device: torch.device | str = "cpu",
 ) -> FamilyData:
     """Create adjacent pairs differing in exactly one controlled gene."""
@@ -185,11 +205,28 @@ def sample_counterfactual_family_data(
     for pair_index, condition in enumerate(chosen):
         family = TREE_FAMILIES[condition // len(names)]
         gene_name = names[condition % len(names)]
-        sample_seed = int(rng.integers(0, 2**31))
-        base = TreeGenome.random(sample_seed, family=family, span=genome_span, locked=locked)
-        low = base.with_values({gene_name: -genome_span})
-        high = base.with_values({gene_name: genome_span})
-        environment = EnvironmentSpec.random(int(rng.integers(0, 2**31)), span=environment_span) if environment_span else EnvironmentSpec()
+        for _ in range(128):
+            sample_seed = int(rng.integers(0, 2**31))
+            base = TreeGenome.random(sample_seed, family=family, span=genome_span, locked=locked)
+            low = base.with_values({gene_name: -genome_span})
+            high = base.with_values({gene_name: genome_span})
+            environment = EnvironmentSpec.random(int(rng.integers(0, 2**31)), span=environment_span) if environment_span else EnvironmentSpec()
+            pair_targets = (make_tree_target(low, size, environment), make_tree_target(high, size, environment))
+            counts = [
+                (int(np.count_nonzero(materials == 2)), int(np.count_nonzero(materials == 3)))
+                for _, materials in pair_targets
+            ]
+            if all(
+                (branches == 0 or branches >= minimum_branch_voxels)
+                and (leaves == 0 or leaves >= minimum_leaf_voxels)
+                for branches, leaves in counts
+            ):
+                break
+        else:
+            raise RuntimeError(
+                f"could not generate a {family}/{gene_name} counterfactual pair with minimum "
+                f"branch={minimum_branch_voxels} and leaf={minimum_leaf_voxels} voxel counts"
+            )
         genomes.extend((low, high))
         environments.extend((environment, environment))
         methods.extend((f"counterfactual:{gene_name}:low", f"counterfactual:{gene_name}:high"))
@@ -198,4 +235,6 @@ def sample_counterfactual_family_data(
     return _pack_family_data(
         genomes, environments, methods, size, device,
         condition_ids=item_conditions, pair_ids=pair_ids,
+        minimum_branch_voxels=minimum_branch_voxels,
+        minimum_leaf_voxels=minimum_leaf_voxels,
     )

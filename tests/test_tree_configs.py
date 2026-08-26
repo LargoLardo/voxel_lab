@@ -61,8 +61,11 @@ def test_tree_presets_form_a_parseable_checkpoint_pipeline():
     assert family["loss_weights"]["occupancy_range"] == 2.0
     assert family["loss_weights"]["magnitude"] == 0.01
     assert family["validation_every"] == 500
-    assert family["loss_weights"]["branch_dice"] == 1.0
+    assert family["loss_weights"]["trunk_dice"] == 0.25
+    assert family["loss_weights"]["branch_dice"] == 2.0
     assert family["loss_weights"]["leaf_dice"] == 1.0
+    assert family["minimum_branch_voxels"] == 8
+    assert family["minimum_leaf_voxels"] == 8
 
     environment = configs["tree_environment.yaml"]
     assert environment["damage_probability"] == 0.35

@@ -68,6 +68,28 @@ def test_pool_appends_a_cpu_backed_paired_suffix():
     assert saved.style_seeds.tolist() == [10, 11, 22, 23]
 
 
+def test_pair_sampling_includes_underrepresented_branch_leaf_strata():
+    pair_ids = torch.arange(8).repeat_interleave(2)
+    conditions = torch.arange(8).repeat_interleave(2)
+    materials = torch.zeros(16, 2, 2, 2, dtype=torch.long)
+    for pair in range(8):
+        if pair % 2:
+            materials[pair * 2 : pair * 2 + 2, 0, 0, 0] = 2
+        if pair % 4 >= 2:
+            materials[pair * 2 : pair * 2 + 2, 0, 0, 1] = 3
+    pool = StatePool(
+        torch.zeros(16, 1), torch.zeros(16, 1), target_materials=materials,
+        condition_ids=conditions, pair_ids=pair_ids,
+    )
+
+    batch = pool.sample_stratified_pairs(8, 0)
+    signatures = {
+        (bool((pair == 2).any()), bool((pair == 3).any()))
+        for pair in batch.target_materials.view(4, 2, 2, 2, 2)
+    }
+    assert signatures == {(False, False), (False, True), (True, False), (True, True)}
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
 def test_cuda_pool_indices_can_select_reseed_entries_and_commit_to_cpu():
     pool = StatePool(torch.zeros(4, 2), torch.arange(4).view(4, 1).float())

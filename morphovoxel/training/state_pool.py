@@ -88,10 +88,10 @@ class StatePool:
         )
 
     def sample_stratified_pairs(self, count: int, cursor: int, device: str | torch.device = "cpu") -> PoolBatch:
-        """Cycle through adjacent counterfactual pairs instead of global random eviction."""
+        """Cycle through counterfactual pairs, balancing branch/leaf presence."""
         if count < 2 or count % 2 or count > len(self.states) or self.pair_ids is None or self.condition_ids is None:
             raise ValueError("stratified pair sampling needs an even count and paired pool metadata")
-        groups: list[tuple[int, int, torch.Tensor]] = []
+        groups: list[tuple[tuple[bool, ...], int, int, torch.Tensor]] = []
         for pair_id in self.pair_ids.unique(sorted=True).tolist():
             indices = torch.nonzero(self.pair_ids == pair_id, as_tuple=False).flatten()
             if len(indices) != 2:
@@ -99,10 +99,34 @@ class StatePool:
             conditions = self.condition_ids[indices]
             if not bool((conditions == conditions[0]).all()):
                 raise ValueError("counterfactual pair condition ids disagree")
-            groups.append((int(conditions[0]), int(pair_id), indices))
-        groups.sort(key=lambda value: (value[0], value[1]))
+            if self.target_materials is None:
+                structure = ()
+            else:
+                materials = self.target_materials[indices]
+                structure = tuple(bool((materials[item] == material).any()) for material in (2, 3) for item in range(2))
+            groups.append((structure, int(conditions[0]), int(pair_id), indices))
+        buckets: dict[tuple[bool, ...], list[tuple[int, int, torch.Tensor]]] = {}
+        for structure, condition, pair_id, indices in groups:
+            buckets.setdefault(structure, []).append((condition, pair_id, indices))
+        for values in buckets.values():
+            values.sort(key=lambda value: (value[0], value[1]))
         pair_count = count // 2
-        selected = [groups[(cursor + offset) % len(groups)][2] for offset in range(pair_count)]
+        keys = sorted(buckets)
+        selected, used = [], set()
+        round_index = 0
+        while len(selected) < pair_count:
+            for key_offset in range(len(keys)):
+                key = keys[(cursor + key_offset) % len(keys)]
+                values = buckets[key]
+                for value_offset in range(len(values)):
+                    value = values[(cursor // max(1, len(keys)) + round_index + value_offset) % len(values)]
+                    if value[1] not in used:
+                        used.add(value[1])
+                        selected.append(value[2])
+                        break
+                if len(selected) == pair_count:
+                    break
+            round_index += 1
         indices = torch.cat(selected)
         return PoolBatch(
             indices.to(device), self.states[indices].to(device), self.genomes[indices].to(device), self.ages[indices].to(device),

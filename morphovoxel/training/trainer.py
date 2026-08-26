@@ -440,6 +440,10 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     else:
         pool_size = max(configured_pool_size, batch) if configured_pool_size else 0
     active_gene_names = FAMILY_GENE_NAMES + ENVIRONMENT_GENE_NAMES if train_light_tropism else FAMILY_GENE_NAMES
+    minimum_branch_voxels = int(config.get("minimum_branch_voxels", 1))
+    minimum_leaf_voxels = int(config.get("minimum_leaf_voxels", 1))
+    if minimum_branch_voxels < 0 or minimum_leaf_voxels < 0:
+        raise ValueError("minimum branch and leaf voxel counts must be non-negative")
     if tree_family:
         if batch % 2 or pool_size % 2:
             raise ValueError("tree-family counterfactual batch_size and pool_size must be even")
@@ -449,6 +453,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             genome_span=initial["genome_span"],
             environment_span=initial["environment_span"] if context_channels else 0.0,
             active_gene_names=active_gene_names,
+            minimum_branch_voxels=minimum_branch_voxels,
+            minimum_leaf_voxels=minimum_leaf_voxels,
         )
         pool_states = seed_state(
             pool_size // 2, size, layout, dimensions=dimensions,
@@ -565,6 +571,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                         environment_span=curriculum["environment_span"] if context_channels else 0.0,
                         active_gene_names=active_gene_names,
                         condition_ids=replacement_conditions,
+                        minimum_branch_voxels=minimum_branch_voxels,
+                        minimum_leaf_voxels=minimum_leaf_voxels,
                         device=device,
                     )
                     genomes[reseed] = replacement.model_genomes
