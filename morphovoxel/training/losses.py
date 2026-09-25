@@ -1,6 +1,8 @@
 """Differentiable morphology losses."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import torch
 from torch.nn import functional as F
 
@@ -35,39 +37,65 @@ def _distance_field(target: torch.Tensor) -> torch.Tensor:
     return distance[:, 0]
 
 
-def _shape_components(
-    occupancy: torch.Tensor,
-    target: torch.Tensor,
-    material_logits: torch.Tensor,
-    material_target: torch.Tensor,
-) -> dict[str, torch.Tensor]:
-    shape = occupancy.shape[1:]
+def _shape_descriptors(values: torch.Tensor, coordinates: tuple[torch.Tensor, ...]) -> tuple[torch.Tensor, ...]:
+    spatial = values.ndim - 1
+    mass = values.flatten(1).sum(1).clamp_min(1e-6)
+    centroid = torch.stack([(values * coordinate).flatten(1).sum(1) / mass for coordinate in coordinates], 1)
+    variance = torch.stack([
+        (values * (coordinate - centroid[:, index].view(-1, *([1] * spatial))).square()).flatten(1).sum(1) / mass
+        for index, coordinate in enumerate(coordinates)
+    ], 1)
+    return mass / values[0].numel(), variance[:, 0].clamp_min(1e-8).sqrt(), variance[:, 1:].sum(1).clamp_min(1e-8).sqrt(), centroid
+
+
+@dataclass
+class MorphologyTargets:
+    occupancy: torch.Tensor
+    foreground: torch.Tensor
+    foreground_count: torch.Tensor
+    background_count: torch.Tensor
+    material_labels: torch.Tensor
+    material_masks: tuple[torch.Tensor, ...]
+    coordinates: tuple[torch.Tensor, ...]
+    descriptors: tuple[torch.Tensor, ...]
+    distance: torch.Tensor
+
+
+@torch.no_grad()
+def prepare_morphology_targets(target: torch.Tensor, material: torch.Tensor) -> MorphologyTargets:
+    """Compute constants once for a batch's growth and persistence losses.
+
+    Targets must already use the state's device and floating-point dtype.
+    Rebuild after replacing targets; this contains no model-dependent values.
+    """
+    foreground = target > 0.5
+    material = material.to(device=target.device, dtype=torch.long)
     coordinates = torch.meshgrid(
-        *(torch.linspace(-1, 1, length, device=occupancy.device, dtype=occupancy.dtype) for length in shape),
+        *(torch.linspace(-1, 1, length, device=target.device, dtype=target.dtype) for length in target.shape[1:]),
         indexing="ij",
     )
+    return MorphologyTargets(
+        target, foreground,
+        foreground.flatten(1).sum(1), (~foreground).flatten(1).sum(1),
+        material.masked_fill(~foreground, -100),
+        tuple((material == index).to(target) for index in (1, 2, 3)),
+        coordinates, _shape_descriptors(target, coordinates), _distance_field(target),
+    )
 
-    def descriptors(values: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        mass = values.flatten(1).sum(1).clamp_min(1e-6)
-        centroid = torch.stack([(values * coordinate).flatten(1).sum(1) / mass for coordinate in coordinates], 1)
-        variance = torch.stack([
-            (values * (coordinate - centroid[:, index].view(-1, *([1] * len(shape)))).square()).flatten(1).sum(1) / mass
-            for index, coordinate in enumerate(coordinates)
-        ], 1)
-        volume = mass / values[0].numel()
-        height = variance[:, 0].clamp_min(1e-8).sqrt()
-        width = variance[:, 1:].sum(1).clamp_min(1e-8).sqrt()
-        return volume, height, width, centroid
 
-    predicted = descriptors(occupancy)
-    wanted = descriptors(target)
+def _shape_components(
+    occupancy: torch.Tensor,
+    material_logits: torch.Tensor,
+    targets: MorphologyTargets,
+) -> dict[str, torch.Tensor]:
+    predicted = _shape_descriptors(occupancy, targets.coordinates)
+    wanted = targets.descriptors
     material_probabilities = material_logits.softmax(1) * occupancy[:, None]
-    material_target = material_target.to(occupancy.device)
     semantic_dice = {}
     for name, index in (("trunk_dice", 1), ("branch_dice", 2), ("leaf_dice", 3)):
         if index < material_probabilities.shape[1]:
             semantic_dice[name], _ = _soft_overlap(
-                material_probabilities[:, index], (material_target == index).to(occupancy),
+                material_probabilities[:, index], targets.material_masks[index - 1],
             )
     branch_loss = semantic_dice.get("branch_dice", occupancy.sum() * 0)
     return {
@@ -88,18 +116,21 @@ def morphology_loss(
     layout: StateLayout,
     weights: dict[str, float] | None = None,
     state_limit: float = 4.0,
+    *,
+    prepared_targets: MorphologyTargets | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Compute target, range, leakage, and bounded-state losses."""
     if state_limit <= 0:
         raise ValueError("state_limit must be positive")
     weights = weights or {}
     occupancy = state[:, layout.occupancy]
-    target = occupancy_target.to(occupancy)
+    targets = prepared_targets or prepare_morphology_targets(occupancy_target.to(occupancy), material_target)
+    target = targets.occupancy
     squared_error = (occupancy - target).square().flatten(1)
-    foreground = (target > 0.5).flatten(1)
+    foreground = targets.foreground.flatten(1)
     background = ~foreground
-    foreground_error = (squared_error * foreground).sum(1) / foreground.sum(1).clamp_min(1)
-    background_error = (squared_error * background).sum(1) / background.sum(1).clamp_min(1)
+    foreground_error = (squared_error * foreground).sum(1) / targets.foreground_count.clamp_min(1)
+    background_error = (squared_error * background).sum(1) / targets.background_count.clamp_min(1)
     prediction = occupancy.clamp(0, 1)
     soft_dice, soft_iou = _soft_overlap(prediction, target)
     components = {
@@ -111,12 +142,14 @@ def morphology_loss(
         "magnitude": F.relu(state.abs() - state_limit).square().mean(),
         "soft_dice": soft_dice,
         "soft_iou": soft_iou,
-        "distance": (prediction * (1 - target) * _distance_field(target)).mean(),
+        "distance": (prediction * (1 - target) * targets.distance).mean(),
     }
-    occupied = target > 0.5
-    logits = state[:, layout.material_slice].movedim(1, -1)
-    components["material"] = F.cross_entropy(logits[occupied], material_target.to(state.device)[occupied]) if occupied.any() else state.sum() * 0
-    components.update(_shape_components(occupancy.clamp(0, 1), target, state[:, layout.material_slice], material_target))
+    # Ignore background in a fixed-shape loss instead of gathering occupied
+    # voxels, which requires nonzero() and a GPU-to-CPU synchronization.
+    components["material"] = F.cross_entropy(
+        state[:, layout.material_slice], targets.material_labels, reduction="sum", ignore_index=-100,
+    ) / targets.foreground_count.sum().clamp_min(1)
+    components.update(_shape_components(prediction, state[:, layout.material_slice], targets))
     structural = {
         "soft_dice", "soft_iou", "distance", "height", "width", "volume", "centroid",
         "trunk_dice", "branch_dice", "leaf_dice", "branch_distribution",

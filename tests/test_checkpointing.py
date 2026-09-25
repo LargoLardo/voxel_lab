@@ -6,13 +6,14 @@ from morphovoxel.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointCompatibilityError,
     convert_specialist_to_family,
+    initialize_tree_family,
     load_checkpoint,
     save_checkpoint,
 )
 from morphovoxel.environment import ENVIRONMENT_CHANNELS, ENVIRONMENT_SCHEMA_VERSION
 from morphovoxel.genomes import TREE_GENOME_VERSION, TreeGenome
 from morphovoxel.model_2d import NeuralCA2D
-from morphovoxel.model_3d import NeuralCA3D
+from morphovoxel.model_3d import NeuralCA3D, TreeFamilyNCA3D
 from morphovoxel.targets.targets_3d import TREE_TARGET_VERSION
 
 
@@ -32,6 +33,28 @@ def test_checkpoint_roundtrip(tmp_path):
 def test_missing_checkpoint_explains_prerequisite(tmp_path):
     with pytest.raises(FileNotFoundError, match="launch the Full experiment"):
         load_checkpoint(tmp_path / "missing.pt", torch.nn.Linear(2, 2))
+
+
+@pytest.mark.parametrize("kind", ["tree_specialist", "tree_family"])
+@pytest.mark.parametrize("target_version", [3, TREE_TARGET_VERSION])
+def test_family_initialization_preserves_checkpoint_weights(tmp_path, kind, target_version):
+    destination = TreeFamilyNCA3D(6, 8, TreeGenome.model_size(), 1, len(ENVIRONMENT_CHANNELS))
+    source = NeuralCA3D(6, 8, 0, 1) if kind == "tree_specialist" else TreeFamilyNCA3D(6, 8, TreeGenome.model_size(), 1, len(ENVIRONMENT_CHANNELS))
+    reference = TreeFamilyNCA3D(6, 8, TreeGenome.model_size(), 1, len(ENVIRONMENT_CHANNELS))
+    if kind == "tree_specialist":
+        convert_specialist_to_family(source, reference)
+    else:
+        reference.load_state_dict(source.state_dict())
+    path = tmp_path / "source.pt"
+    save_checkpoint(path, source, step=900, config={"model_kind": kind, "target_generator_version": target_version})
+    initialize_tree_family(path, destination)
+    assert all(torch.equal(value, destination.state_dict()[name]) for name, value in reference.state_dict().items())
+
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    payload["metadata"]["genome_schema_version"] = 999
+    torch.save(payload, path)
+    with pytest.raises(CheckpointCompatibilityError, match="genome schema"):
+        initialize_tree_family(path, destination)
 
 
 def test_family_checkpoint_records_explicit_training_and_validation_metadata(tmp_path):

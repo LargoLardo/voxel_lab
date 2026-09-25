@@ -101,19 +101,37 @@ class TreeFamilyNCA3D(nn.Module):
     def living_mask(self, state: torch.Tensor) -> torch.Tensor:
         return F.max_pool3d(state[:, :1], 3, stride=1, padding=1) > 0.1
 
+    def prepare_genome(self, genome: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        """Prepare fixed conditioning for one rollout, retaining its autograd graph.
+
+        The caller must discard this after changing weights or genomes. Keeping
+        it local to a rollout avoids stale weights and freed backward graphs.
+        """
+        if genome is None or genome.ndim != 2 or genome.shape[1] != self.genome_size:
+            raise ValueError("genome must have shape [B, genome_size]")
+        family_ids = genome[:, :self.family_count].argmax(1)
+        continuous = genome[:, self.family_count:].to(self.shared.weight)
+        film_weight = torch.stack([film.weight for film in self.film])[family_ids]
+        film_bias = torch.stack([film.bias for film in self.film])[family_ids]
+        modulation = torch.bmm(film_weight, continuous.unsqueeze(2)).squeeze(2) + film_bias
+        gamma, beta = modulation.chunk(2, 1)
+        head_weight = torch.stack([head.weight[:, :, 0, 0, 0] for head in self.heads])[family_ids]
+        head_bias = torch.stack([head.bias for head in self.heads])[family_ids]
+        return gamma, beta, head_weight, head_bias
+
     def forward(
         self,
         state: torch.Tensor,
         genome: torch.Tensor | None = None,
         context: torch.Tensor | None = None,
         fire_mask: torch.Tensor | None = None,
+        *,
+        prepared_genome: tuple[torch.Tensor, ...] | None = None,
     ) -> torch.Tensor:
         if state.ndim != 5 or state.shape[1] != self.channels:
             raise ValueError("state must have shape [B,C,D,H,W]")
         if genome is None or genome.shape != (state.shape[0], self.genome_size):
             raise ValueError("genome must have shape [B, genome_size]")
-        family = genome[:, : self.family_count]
-        family_ids = family.argmax(1)
         features = perceive_3d(state)
         if self.context_channels:
             expected = (state.shape[0], self.context_channels, *state.shape[2:])
@@ -123,16 +141,8 @@ class TreeFamilyNCA3D(nn.Module):
         elif context is not None:
             raise ValueError("this model was created without environment context channels")
         hidden = F.relu(self.shared(features))
-        continuous = genome[:, self.family_count :].to(hidden)
-        # Select the small parameter matrices instead of finding variable-sized
-        # voxel batches with nonzero(), which synchronizes the GPU at every step.
-        film_weight = torch.stack([film.weight for film in self.film])[family_ids]
-        film_bias = torch.stack([film.bias for film in self.film])[family_ids]
-        modulation = torch.bmm(film_weight, continuous.unsqueeze(2)).squeeze(2) + film_bias
-        gamma, beta = modulation.chunk(2, 1)
+        gamma, beta, head_weight, head_bias = self.prepare_genome(genome) if prepared_genome is None else prepared_genome
         modulated = F.relu(hidden * (1 + gamma[..., None, None, None]) + beta[..., None, None, None])
-        head_weight = torch.stack([head.weight[:, :, 0, 0, 0] for head in self.heads])[family_ids]
-        head_bias = torch.stack([head.bias for head in self.heads])[family_ids]
         delta = torch.bmm(head_weight, modulated.flatten(2)).reshape_as(state) + head_bias[..., None, None, None]
         fire = torch.rand_like(state[:, :1]) <= self.fire_rate if fire_mask is None else fire_mask
         if fire.shape != state[:, :1].shape:

@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 
 import torch
+
+from .model_3d import TreeFamilyNCA3D
 
 
 def rollout(
@@ -21,15 +24,18 @@ def rollout(
     frames = [state.detach().cpu()] if capture_every else []
     if on_step:
         on_step(0, state)
+    step_model = model
+    if steps and isinstance(model, TreeFamilyNCA3D):
+        step_model = partial(model, prepared_genome=model.prepare_genome(genome))
     for step in range(steps):
         step_context = context(step, state) if callable(context) else context
         if shared_fire_pairs:
             if len(state) % 2:
                 raise ValueError("shared fire pairs require an even batch")
             fire = (torch.rand_like(state[::2, :1]) <= float(model.fire_rate)).repeat_interleave(2, 0)
-            state = model(state, genome, step_context, fire) if step_context is not None else model(state, genome, fire_mask=fire)
+            state = step_model(state, genome, step_context, fire) if step_context is not None else step_model(state, genome, fire_mask=fire)
         else:
-            state = model(state, genome, step_context) if step_context is not None else model(state, genome)
+            state = step_model(state, genome, step_context) if step_context is not None else step_model(state, genome)
         if capture_every and ((step + 1) % capture_every == 0 or step + 1 == steps):
             frames.append(state.detach().cpu())
         if on_step:

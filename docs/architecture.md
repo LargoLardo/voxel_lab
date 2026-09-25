@@ -191,7 +191,7 @@ The complete default chain performs 21,000 optimizer iterations before counting 
 - Existing specialist and legacy one-hot checkpoints remain viewable when their recorded dimensions match.
 - Old models without context receive no context or an explicit zero/default context path.
 - Checkpoint format, model kind, genome/environment schema versions, target generator version, training ranges, validation panel, and best persistence score are stored where applicable.
-- Procedural-tree target schema version 3 and tree-genome schema version 2 cover the fixed base geometry, redesigned genes, and new family architecture; older tree checkpoints are rejected and must be retrained through the pipeline.
+- Procedural-tree target version 4 fixes wind targets to depend on the wind vector visible to the model. Version 3 weights remain loadable with tree-genome schema version 2; training resumes with a rebuilt pool, preserving model/optimizer state, and validation must be rerun. Earlier target/genome layouts remain incompatible.
 - Procedural tree targets are stylized voxel organisms, not botanical simulations.
 - Interpolation does not cross discrete topology families.
 - A family model may trade specialist quality for shared capacity.

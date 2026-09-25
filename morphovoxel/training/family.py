@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import torch
@@ -36,10 +36,14 @@ def _pack_family_data(
     *,
     condition_ids: Sequence[int] | None = None,
     pair_ids: Sequence[int] | None = None,
+    targets: Sequence[tuple[np.ndarray, np.ndarray]] | None = None,
     minimum_branch_voxels: int = 1,
     minimum_leaf_voxels: int = 1,
 ) -> FamilyData:
-    targets = [make_tree_target(genome, size, environment) for genome, environment in zip(genomes, environments)]
+    if targets is None:
+        targets = [make_tree_target(genome, size, environment) for genome, environment in zip(genomes, environments)]
+    if len(targets) != len(genomes):
+        raise ValueError("each genome must have one target")
     empty = [index for index, (occupancy, _) in enumerate(targets) if not np.asarray(occupancy).any()]
     if empty:
         raise RuntimeError(f"tree target invariant violated: occupancy is empty for sample indices {', '.join(map(str, empty))}")
@@ -82,24 +86,79 @@ def _reflect_mutation(genome: TreeGenome, strength: float, seed: int) -> TreeGen
     return TreeGenome(genome.family, tuple(genes), genome.style_seed)
 
 
-def curriculum_values(step: int, iterations: int, config: dict) -> dict[str, float]:
-    """Widen genes first, then interpolation, mutation, and environments."""
+def curriculum_values(step: int, iterations: int, config: dict) -> dict[str, float | str]:
+    """Use the selected Phase 2 schedule; preserve later stages' existing recipe."""
+    mode = config.get("family_curriculum")
+    stage = "variation"
+    if mode is not None:
+        if mode not in {"full", "basics", "variation"}:
+            raise ValueError("family_curriculum must be full, basics, or variation")
+        fraction = float(config.get("basic_family_fraction", 0.25))
+        if not 0 < fraction < 1:
+            raise ValueError("basic_family_fraction must be between zero and one")
+        if mode == "full" and iterations < 2:
+            raise ValueError("the full family curriculum requires at least two iterations")
+        basic_steps = min(iterations - 1, max(1, int(iterations * fraction))) if mode == "full" else 0
+        if mode == "basics" or (mode == "full" and step < basic_steps):
+            stage = "basics"
+        elif mode == "full":
+            step, iterations = step - basic_steps, iterations - basic_steps
     progress = min(1.0, max(0.0, (step + 1) / max(1, iterations)))
     initial_span = float(config.get("initial_genome_span", 0.15))
-    span = initial_span + (1 - initial_span) * min(1.0, progress / float(config.get("genome_widen_fraction", 0.45)))
+    widen_fraction = float(config.get("genome_widen_fraction", 0.45))
+    if not 0 < initial_span <= 1 or not 0 < widen_fraction <= 1:
+        raise ValueError("initial_genome_span and genome_widen_fraction must be in (0, 1]")
+    span = initial_span + (1 - initial_span) * min(1.0, progress / widen_fraction)
     interpolation_start = float(config.get("interpolation_start_fraction", 0.25))
     mutation_start = float(config.get("mutation_start_fraction", 0.45))
     environment_start = float(config.get("environment_start_fraction", 0.65))
     interpolation = float(config.get("interpolation_fraction", 0.25)) if progress >= interpolation_start else 0.0
     mutation = float(config.get("mutation_fraction", 0.25)) if progress >= mutation_start else 0.0
     environment_span = 0.0 if progress < environment_start else min(1.0, (progress - environment_start) / max(1e-6, 1 - environment_start))
-    return {
+    values = {
         "progress": progress,
         "genome_span": min(1.0, max(0.0, span)),
         "interpolation_fraction": min(1.0, max(0.0, interpolation)),
         "mutation_fraction": min(1.0, max(0.0, mutation)),
         "environment_span": environment_span,
     }
+    if mode is not None:
+        neutral_fraction = float(config.get("neutral_fraction", 0.25))
+        combination_start = float(config.get("combination_start_fraction", 0.25))
+        if not 0 < neutral_fraction < 1 or not 0 <= combination_start < 1:
+            raise ValueError("neutral_fraction must be in (0, 1) and combination_start_fraction in [0, 1)")
+        diversity = min(1.0, max(0.0, (progress - combination_start) / min(widen_fraction, 1 - combination_start)))
+        values.update(
+            curriculum_stage=stage,
+            genome_span=0.0 if stage == "basics" else span,
+            background_span=0.0 if stage == "basics" else span * diversity,
+            style_random_fraction=0.0 if stage == "basics" else diversity,
+            neutral_fraction=1.0 if stage == "basics" else neutral_fraction,
+            environment_span=0.0,
+            interpolation_fraction=0.0,
+            mutation_fraction=0.0,
+        )
+    return values
+
+
+def family_style_seeds(config: dict) -> tuple[int, ...]:
+    # Quarter-turn phases: adjacent integer seeds rasterize to the same tree.
+    seeds = config.get("family_style_seeds", [0, 970806, 1941611, 2912417])
+    if not isinstance(seeds, (list, tuple)) or not seeds:
+        raise ValueError("family_style_seeds must be a nonempty list of integer seeds")
+    for seed in seeds:
+        TreeGenome(style_seed=seed)  # Reuse the genome's seed validation.
+    return tuple(dict.fromkeys(seeds))
+
+
+def curriculum_sampling_options(values: dict, config: dict) -> dict:
+    """Keep initial pool creation and subsequent replacements on the same recipe."""
+    if "curriculum_stage" not in values:
+        return {}
+    return {
+        name: values[name]
+        for name in ("background_span", "style_random_fraction", "neutral_fraction")
+    } | {"style_seeds": family_style_seeds(config)}
 
 
 def sample_family_data(
@@ -177,6 +236,10 @@ def sample_counterfactual_family_data(
     seed: int,
     *,
     genome_span: float = 1.0,
+    background_span: float | None = None,
+    style_seeds: Sequence[int] | None = None,
+    style_random_fraction: float = 1.0,
+    neutral_fraction: float = 0.0,
     environment_span: float = 0.0,
     active_gene_names: Sequence[str] = FAMILY_GENE_NAMES,
     condition_ids: Sequence[int] | None = None,
@@ -186,8 +249,13 @@ def sample_counterfactual_family_data(
     device: torch.device | str = "cpu",
 ) -> FamilyData:
     """Create adjacent pairs differing in exactly one controlled gene."""
-    if pair_count < 1 or not 0 < genome_span <= 1:
-        raise ValueError("pair_count must be positive and genome_span within (0, 1]")
+    if pair_count < 1 or not 0 <= genome_span <= 1:
+        raise ValueError("pair_count must be positive and genome_span within [0, 1]")
+    background_span = genome_span if background_span is None else background_span
+    if not 0 <= background_span <= genome_span or not 0 <= style_random_fraction <= 1 or not 0 <= neutral_fraction <= 1:
+        raise ValueError("background span and sampling fractions are out of range")
+    if style_seeds is not None:
+        style_seeds = family_style_seeds({"family_style_seeds": list(style_seeds)})
     specs = {spec.name: spec for spec in TREE_GENE_SPECS}
     names = tuple(active_gene_names)
     if not names or len(set(names)) != len(names) or set(names) - set(specs):
@@ -202,17 +270,22 @@ def sample_counterfactual_family_data(
     methods: list[str] = []
     item_conditions: list[int] = []
     pair_ids: list[int] = []
+    targets: list[tuple[np.ndarray, np.ndarray]] = []
     locked = {spec.name for spec in TREE_GENE_SPECS if spec.name not in names}
     for pair_index, condition in enumerate(chosen):
         family = TREE_FAMILIES[condition // len(names)]
         gene_name = names[condition % len(names)]
+        neutral = genome_span == 0 or (neutral_fraction > 0 and rng.random() < neutral_fraction)
         for _ in range(128):
             sample_seed = int(rng.integers(0, 2**31))
-            base = TreeGenome.random(sample_seed, family=family, span=genome_span, locked=locked)
-            low = base.with_values({gene_name: -genome_span})
-            high = base.with_values({gene_name: genome_span})
+            base = TreeGenome.random(sample_seed, family=family, span=0.0 if neutral else background_span, locked=locked)
+            if style_seeds is not None and (neutral or rng.random() >= style_random_fraction):
+                base = replace(base, style_seed=int(rng.choice(style_seeds)))
+            low = base if neutral else base.with_values({gene_name: -genome_span})
+            high = base if neutral else base.with_values({gene_name: genome_span})
             environment = EnvironmentSpec.random(int(rng.integers(0, 2**31)), span=environment_span) if environment_span else EnvironmentSpec()
-            pair_targets = (make_tree_target(low, size, environment), make_tree_target(high, size, environment))
+            low_target = make_tree_target(low, size, environment)
+            pair_targets = (low_target, low_target if neutral else make_tree_target(high, size, environment))
             counts = [
                 (int(np.count_nonzero(materials == 2)), int(np.count_nonzero(materials == 3)))
                 for _, materials in pair_targets
@@ -229,13 +302,14 @@ def sample_counterfactual_family_data(
                 f"branch={minimum_branch_voxels} and leaf={minimum_leaf_voxels} voxel counts"
             )
         genomes.extend((low, high))
+        targets.extend(pair_targets)
         environments.extend((environment, environment))
-        methods.extend((f"counterfactual:{gene_name}:low", f"counterfactual:{gene_name}:high"))
+        methods.extend(("neutral", "neutral") if neutral else (f"counterfactual:{gene_name}:low", f"counterfactual:{gene_name}:high"))
         item_conditions.extend((condition, condition))
         pair_ids.extend((pair_id_start + pair_index, pair_id_start + pair_index))
     return _pack_family_data(
         genomes, environments, methods, size, device,
-        condition_ids=item_conditions, pair_ids=pair_ids,
+        condition_ids=item_conditions, pair_ids=pair_ids, targets=targets,
         minimum_branch_voxels=minimum_branch_voxels,
         minimum_leaf_voxels=minimum_leaf_voxels,
     )

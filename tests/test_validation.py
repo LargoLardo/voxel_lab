@@ -3,7 +3,7 @@ import pytest
 import torch
 
 from morphovoxel.environment import ENVIRONMENT_CHANNELS, EnvironmentSpec
-from morphovoxel.genomes import TREE_GENE_SPECS, TreeGenome
+from morphovoxel.genomes import TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome
 from morphovoxel.state import StateLayout
 from morphovoxel.targets import make_tree_target
 from morphovoxel.validation import (
@@ -44,7 +44,22 @@ def test_validation_panel_is_deterministic_and_covers_required_sources():
         for case in first
         for spec, value in zip(TREE_GENE_SPECS, case.genome.genes)
     )
-    assert {case.genome.family for case in first if case.category == "interpolation"} == {"branching"}
+    for category in ("default", "boundary", "corner", "random", "interpolation", "mutation"):
+        counts = [sum(case.category == category and case.genome.family == family for case in first) for family in TREE_FAMILIES]
+        assert min(counts) > 0 and len(set(counts)) == 1
+
+
+def test_default_variation_validation_checks_every_family_at_both_gene_limits():
+    panel = build_validation_panel(environments=(EnvironmentSpec(),), fire_seeds=(1,))
+    for family in TREE_FAMILIES:
+        for gene in ("height", "canopy_spread"):
+            values = {case.genome.value(gene) for case in panel if case.genome.family == family and case.category == "boundary"}
+            assert {-1, 1} <= values
+    disabled = build_validation_panel(
+        boundary_genes=(), random_count=0, interpolation_steps=0, mutation_count=0,
+        environments=(EnvironmentSpec(),), fire_seeds=(1,),
+    )
+    assert len(disabled) == len(TREE_FAMILIES)
 
 
 class _TargetModel(torch.nn.Module):

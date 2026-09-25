@@ -16,12 +16,25 @@ import pytest
 import torch
 
 from morphovoxel.environment import ENVIRONMENT_CHANNELS, EnvironmentSpec
-from morphovoxel.genomes import TreeGenome
+from morphovoxel.genomes import TREE_GENOME_VERSION, TreeGenome
 from morphovoxel.state import StateLayout
 from morphovoxel.targets import make_tree_target
+from morphovoxel.targets.targets_3d import TREE_TARGET_VERSION
 from morphovoxel.ui import CONFIGS, HTML, DashboardHandler, _RecoveredProcess, _inside, _launch, build_state, create_server
 from morphovoxel.utils import steps_per_second, write_live_preview
 from morphovoxel.validation import ValidationCase, ValidationCriteria, ValidationReport, ValidationTrial
+
+
+def test_checkpoint_selector_accepts_previous_wind_target_version(tmp_path):
+    for version in (2, 3, TREE_TARGET_VERSION, 999):
+        run = tmp_path / "runs" / f"target_{version}"
+        run.mkdir(parents=True)
+        (run / "metadata.json").write_text(json.dumps({
+            "model_kind": "tree_family", "genome_schema_version": TREE_GENOME_VERSION,
+            "target_generator_version": version, "context_channels": len(ENVIRONMENT_CHANNELS),
+        }))
+    supported = {run["name"] for run in build_state(tmp_path)["runs"] if run["tree_schema_compatible"]}
+    assert supported == {"target_3", f"target_{TREE_TARGET_VERSION}"}
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Detached job recovery uses macOS/Linux process inspection")
@@ -193,6 +206,54 @@ assert.equal(elements['#labDeleteCheckpoint'].disabled, true);
     subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
 
 
+def test_phase_two_dashboard_keeps_curriculum_and_checkpoint_selection_in_yaml():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to execute the dashboard JavaScript regression check")
+    functions = [re.search(r"function syncFamilyCurriculum\(.*?\n\}", HTML, re.DOTALL).group()]
+    functions.append(re.search(r"const dependencySpecs=\{.*?\};", HTML, re.DOTALL).group())
+    functions.extend(
+        next(line for line in HTML.splitlines() if line.startswith(f"function {name}("))
+        for name in ("yamlText", "yamlNumber", "setYamlText", "setDependencyCheckpoint", "syncDependencyCheckpoints")
+    )
+    script = """
+const assert=require('node:assert/strict');
+const elements={};
+const $=id=>elements[id]||(elements[id]={value:'',textContent:'',innerHTML:'',hidden:false});
+const esc=String;
+let kind='family';
+const state={runs:[
+  {name:'specialist',kind:'specialist',model_kind:'tree_specialist',context_channels:0,tree_schema_compatible:true,checkpoints:['best.pt']},
+  {name:'basic_families',kind:'family',model_kind:'tree_family',context_channels:12,tree_schema_compatible:true,checkpoints:['best.pt','basic_families.pt']},
+  {name:'outdated',kind:'family',model_kind:'tree_family',context_channels:12,tree_schema_compatible:false,checkpoints:['best.pt']},
+  {name:'legacy',kind:'conditional',model_kind:'legacy_conditional',context_channels:0,checkpoints:['best.pt']}
+]};
+$('#configSelect').value='tree_family.yaml';
+""" + "\n".join(functions) + r"""
+for(const mode of ['full','basics','variation']){
+  $('#editor').value=`family_curriculum: ${mode}\ninitialize_from_checkpoint: runs/basic_families/checkpoints/best.pt\n`;
+  syncDependencyCheckpoints();
+  assert.equal($('#familyCurriculum').value,mode);
+  assert.equal($('#familyCurriculumField').hidden,false);
+  assert.equal($('#dependencyCheckpoint').value,'runs/basic_families/checkpoints/best.pt');
+  assert.match($('#dependencyCheckpoint').innerHTML,/runs\/specialist\/checkpoints\/best.pt/);
+  assert.match($('#dependencyCheckpoint').innerHTML,/basic_families.pt/);
+  assert.doesNotMatch($('#dependencyCheckpoint').innerHTML,/outdated|legacy/);
+  setDependencyCheckpoint('runs/specialist/checkpoints/best.pt');
+  assert.equal(yamlText('initialize_from_checkpoint'),'runs/specialist/checkpoints/best.pt');
+  assert.equal(yamlText('family_curriculum'),mode);
+}
+$('#editor').value+='resume: old.pt\ninitialize_from_specialist: old.pt\n';
+setDependencyCheckpoint('runs/basic_families/checkpoints/best.pt');
+assert.doesNotMatch($('#editor').value,/^resume:|^initialize_from_specialist:/m);
+kind='specialist';$('#configSelect').value='tree_specialist.yaml';
+syncDependencyCheckpoints();
+assert.equal($('#familyCurriculumField').hidden,true);
+assert.equal($('#dependencyCheckpointField').hidden,true);
+"""
+    subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
+
+
 def test_step_rate_uses_completed_updates(monkeypatch):
     monkeypatch.setattr("morphovoxel.utils.time.perf_counter", lambda: 12.0)
     assert steps_per_second(24, 10.0) == 12.0
@@ -257,7 +318,7 @@ def test_full_presets_precede_smoke_presets_and_missing_dependencies_are_blocked
                 "config": "tree_family.yaml",
                 "content": (
                     "run_name: tree_family\nmodel_kind: tree_family\n"
-                    "initialize_from_specialist: runs/tree_specialist/checkpoints/best.pt\n"
+                    "initialize_from_checkpoint: runs/tree_specialist/checkpoints/best.pt\n"
                 ),
                 "device": "cpu",
                 "live_preview": True,
@@ -326,7 +387,10 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         assert "/api/evaluate" in root and "1,024 and 2,048 steps" in root
         assert "Max channel magnitude" in root and "Regeneration" in root
         assert 'id="dependencyCheckpoint"' in root
-        assert "'tree_family.yaml':{key:'initialize_from_specialist'" in root
+        assert "'tree_family.yaml':{key:'initialize_from_checkpoint'" in root
+        assert 'id="familyCurriculum"' in root
+        assert "Learn the basic families only" in root and "Learn variation only" in root
+        assert "models:['tree_specialist','tree_family']" in root
         assert "'tree_regeneration.yaml':{key:'resume'" in root
         assert "'tree_environment.yaml':{key:'resume'" in root
         assert "'tree_ecology.yaml':{key:'checkpoint'" in root

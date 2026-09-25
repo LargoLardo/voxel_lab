@@ -3,8 +3,13 @@ dimensions: 3
 model_kind: tree_family
 conditional: true
 environment_conditioning: true
-initialize_from_specialist: runs/tree_specialist/checkpoints/best.pt
-specialist_context_channels: 0
+initialize_from_checkpoint: runs/tree_specialist/checkpoints/best.pt
+# full: basic families followed by variation; basics / variation: only that part.
+family_curriculum: full
+basic_family_fraction: 0.25
+family_style_seeds: [0, 970806, 1941611, 2912417]
+neutral_fraction: 0.25
+combination_start_fraction: 0.25
 seed: 42
 device: auto
 world_size: 16
@@ -33,11 +38,6 @@ persistence_steps: [16, 32]
 persistence_weight: 1.0
 initial_genome_span: 0.15
 genome_widen_fraction: 0.45
-interpolation_start_fraction: 0.25
-interpolation_fraction: 0.25
-mutation_start_fraction: 0.45
-mutation_fraction: 0.25
-mutation_strength: 0.15
 # Keep this stage focused on genome separation. Environmental variation is
 # introduced deliberately by tree_environment.yaml after regeneration.
 environment_start_fraction: 1.0

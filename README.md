@@ -77,7 +77,7 @@ To run all five stages from scratch instead, use:
 The command runs these stages in order and stops on the first failure:
 
 1. `tree_specialist.yaml` learns one default branching tree.
-2. `tree_family.yaml` initializes from the specialist's `best.pt`, adds continuous genome and environment inputs without changing the copied behavior initially, then trains a balanced continuous-genome curriculum in one fixed environment.
+2. `tree_family.yaml` initializes from a specialist or family checkpoint, learns the four basic families, then introduces gene and style variation in one fixed environment. Either part can also run separately.
 3. `tree_regeneration.yaml` resumes the exact family architecture and trains on damaged mature pool states.
 4. `tree_environment.yaml` resumes the regeneration checkpoint and trains across randomized local conditions.
 5. `tree_ecology.yaml` loads the environment-trained family and places two semantic tree genomes in one resource field.
@@ -93,6 +93,24 @@ The individual commands are:
 ```
 
 Do not skip a prerequisite unless you replace its checkpoint path with a compatible checkpoint. Loading mismatched model shapes is rejected rather than silently reinterpreted.
+
+In the dashboard's **02 Tree Family** page, choose **Entire curriculum**, **Learn the basic families only**, or **Learn variation only**, then choose **Start from checkpoint**. All three choices accept compatible specialist and Phase 2 checkpoints. For example: specialist → basic families → variation → regeneration. Use a new run name for each handoff.
+
+The same options work in YAML:
+
+```yaml
+family_curriculum: variation  # full, basics, or variation
+initialize_from_checkpoint: runs/my_basic_families/checkpoints/best.pt
+iterations: 8000
+```
+
+`initialize_from_checkpoint` copies model weights, converting a specialist when needed, and starts a fresh optimizer, pool, and curriculum. It is mutually exclusive with `resume` and the older `initialize_from_specialist` option. Use `resume` to continue the same curriculum with its saved training state; use `initialize_from_checkpoint` to switch curricula. Channel counts, hidden width, and schema versions must remain compatible.
+
+The full curriculum allocates the first 25% of updates to basic families (`basic_family_fraction: 0.25`): all genes neutral, fixed environment, and `family_style_seeds: [0, 970806, 1941611, 2912417]`. These seeds span roughly quarter turns of the style phase and produce four distinct targets per family at 16³; the previous adjacent seeds produced identical targets. It validates all four families across those styles and the configured growth fire seeds, including long growth and recovery checks. The boundary checkpoint is saved as `basic_families.pt`. The transition follows the configured schedule, not a passing validation gate; inspect the report before treating a checkpoint as stable. Basics-only uses the entire update budget for this part.
+
+Variation-only uses the entire budget for variation; full uses its remaining budget. Variation begins with single-gene deviations near ±0.15, widening to ±1 at 45% of the variation budget. After the first 25% (`combination_start_fraction`), other genes and random style seeds gradually enter the examples. Neutral pairs are sampled with probability 25% (`neutral_fraction`) throughout variation to help preserve the basic shapes. All weights remain trainable. `best.pt` comparisons restart when full training switches to variation, because scores on the two validation panels are not comparable. Logs record `curriculum_stage`, gene ranges, and sampling fractions.
+
+Routine pool refreshes select the oldest sampled pairs, so every healthy family/gene condition receives updated curriculum examples. Dead pairs are still reseeded immediately. Accepted targets are reused when assembling a batch; identical neutral pairs generate their target once.
 
 ## Smoke checks
 
@@ -130,13 +148,19 @@ Ecology can route either one shared checkpoint with different genomes or separat
 
 Family training uses stratified low/high counterfactual pairs: seed, style, environment, fire masks, and damage are shared while exactly one gene changes. The loss combines balanced occupancy/material terms with soft Dice/IoU, distance-to-target, height, width, volume, centroid, and separate trunk, branch, and leaf Dice losses. Counterfactual error is normalized over voxels where the paired targets differ, so sparse gene effects are not diluted by world volume. The model uses one shared perception backbone with family-specific FiLM and output heads. Living masks, magnitude/range penalties, gradient clipping, and non-finite checks remain active.
 
+Pairs teach the model what a gene changes: a short-branch and long-branch tree share the same background, so their output difference should match the target difference. This discourages growing one average tree while ignoring its controls, and prevents unrelated growth randomness from obscuring the comparison. Individual target and persistence losses still teach each tree's overall shape and stability. Neutral examples use identical genomes; the extra counterfactual loss is disabled during basic-family training and contributes zero for neutral pairs during variation.
+
+Basic-family training grows each identical pair once, then copies the result into both pool entries. Batch 8 therefore grows four unique examples with the same loss weighting and gradients as eight duplicated examples. Paired pool entries remain available for checkpoint handoffs and later variation training, which continues to grow both members of each pair.
+
 `gradient_accumulation: true` enables accumulation and `gradient_accumulation_steps` selects the number of physical batches per optimizer update. `iterations` continues to count optimizer updates, so a value of 8 uses roughly eight times the batch compute while retaining the memory footprint of one physical batch. Set `gradient_accumulation: false` to use one batch per update; the step count is then ignored.
 
 The shipped tree-family preset uses one batch per optimizer update (`gradient_accumulation: false`, `gradient_accumulation_steps: 1`), a `0.0003` learning rate, gradient clipping at `1.0`, and the same stronger occupancy-range/magnitude penalties used by the stability stages. Its default 16³/batch-8 setting has an effective batch of 8. To restore the previous effective batch of 32, enable accumulation and set its step count to 4; that also restores four times the batch computation per optimizer update. Using fewer batches changes training statistics and may require different iteration counts for comparable quality. Validation runs every 500 optimizer updates to limit long-panel overhead.
 
 `latest.pt` is the final optimizer state. `best.pt` is updated when the configured deterministic validation panel matches or improves its worst-case score, so an early zero-score tie cannot freeze the pipeline at its first validation window. A checkpoint is not stable merely because it is named `best.pt`; inspect its validation report and require `accepted: true`. Full tree presets validate for at least 256 steps and include recovery trials. Archive admission is stricter: the default minimum is 512 growth/persistence steps plus 128 recovery steps across fixed stochastic and environmental cases.
 
-Procedural tree targets use target schema version 3 and tree genomes use schema version 2. Earlier schemas are deliberately rejected because the gene count, target geometry, and family architecture changed. Retrain specialist → family → regeneration → environment rather than resuming an old tree checkpoint.
+Variation validation covers every family with boundary, corner, random, interpolation, and mutation cases. The random/mutation counts and interpolation steps now apply **per family**; zero still disables that category. The default Phase 2 variation panel contains 104 trials instead of 32, so validation takes longer while checking all four families equally. Basic-family validation remains 32 trials.
+
+Procedural tree targets use target version 4 and tree genomes use schema version 2. Wind response now depends on the actual wind vector supplied to the model, so identical inputs require identical targets. Version 3 checkpoint weights remain compatible; resuming them keeps weights and optimizer state but rebuilds the pool to remove targets generated with the old wind calculation. Saved validation results should be rerun with the corrected targets and expanded panel. Target versions before 3 and older genome schemas remain incompatible.
 
 A “new variant” means a new valid genome/style-seed combination, not proof of a fundamentally new species. Mutation and interpolation stay inside the declared gene bounds, and interpolation is allowed only within one discrete family. A candidate outside the sampled training distribution can still fail; archive admission requires finite, bounded, connected, persistent, and regenerative validation rather than visual appeal alone.
 
@@ -144,7 +168,7 @@ A “new variant” means a new valid genome/style-seed combination, not proof o
 
 `device: auto` selects CUDA when available, then Apple Metal (MPS), then CPU. The full presets use FP32 and a `16³` world; family uses batch 8, while the longer regeneration/environment horizons use batch 4 on an RTX 4050 Laptop GPU with 6 GB VRAM. Long 256–512-step validation runs under no-gradient inference.
 
-Family updates select each example's small FiLM and output matrices on the GPU and apply them with batched matrix multiplication, avoiding per-family `nonzero()` synchronization at every cellular step. The fixed 3D perception filters are cached by channel count, dtype, and device. Existing checkpoint parameter names and shapes remain compatible. These execution changes take effect in newly started processes; an already running training job keeps its loaded code and saved configuration.
+Family rollouts prepare each example's genome modulation and output matrices once, then reuse them at every cellular step while preserving gradients. Growth and persistence losses share target-only calculations, material loss uses a fixed-shape background mask, and loss metrics transfer to the CPU together once per optimizer update. Apple Metal uses direct neighbor arithmetic for fixed 3D perception, with the same zero padding, channel order, and gradients as the convolution. CPU/CUDA retain cached convolution filters. Existing checkpoint parameter names and shapes remain compatible. These execution changes take effect in newly started processes; an already running training job keeps its loaded code and saved configuration.
 
 A focused probe of the redesigned family model on the target RTX 4050 (5.997 GiB usable, PyTorch 2.13.0+cu126) completed batch 8 at 48 growth + 32 persistence steps, all structural/counterfactual losses, backward, clipping, and Adam in 1.059 seconds. It peaked at 3088.5 MiB allocated / 3276.0 MiB reserved. Regeneration and environment presets cap their retained differentiable horizon at 96 steps, avoiding allocator-fragile 64 + 96 step graphs; their 512-step validation still runs under no-gradient inference. Close other GPU-heavy applications before full training; these probes do not predict convergence time or morphology quality.
 

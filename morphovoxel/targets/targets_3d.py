@@ -9,7 +9,10 @@ from ..environment import ENVIRONMENT_CHANNELS, EnvironmentSpec, make_environmen
 from ..genomes import TreeGenome
 
 TARGETS_3D = ("branching", "conical", "radial", "mushroom", "dome")
-TREE_TARGET_VERSION = 3
+TREE_TARGET_VERSION = 4
+# Version 3 has the same genome/model layout. Its weights still load, but
+# training must replace pooled targets that used the old wind calculation.
+TREE_TARGET_COMPATIBLE_VERSIONS = (3, TREE_TARGET_VERSION)
 
 
 def _ball(mask: np.ndarray, z: float, y: float, x: float, radius: float) -> None:
@@ -113,16 +116,21 @@ def make_tree_target(
     center = np.asarray(base_seed, dtype=np.float64)
 
     resource_scale = 0.72 + 0.14 * environment.water_level + 0.14 * environment.energy
+    # Match the actual FP32 wind fields supplied to the model. Raw strength
+    # cannot be recovered independently from direction * strength.
+    wind_y = float(np.float32(environment.wind_direction_y * environment.wind_strength))
+    wind_x = float(np.float32(environment.wind_direction_x * environment.wind_strength))
+    wind_strength = min(1.0, math.hypot(wind_y, wind_x))
     height = (
         size * (0.38 + 0.34 * _normalized(genome, "height"))
-        * resource_scale * (1 - 0.18 * environment.wind_strength)
+        * resource_scale * (1 - 0.18 * wind_strength)
     )
-    thickness = 0.55 + 1.05 * _normalized(genome, "trunk_thickness") + 0.35 * environment.wind_strength
+    thickness = 0.55 + 1.05 * _normalized(genome, "trunk_thickness") + 0.35 * wind_strength
     tropism = genome.value("light_tropism")
     lean = np.array((
         0.0,
-        environment.light_direction_y * tropism * size * 0.12 - environment.wind_direction_y * environment.wind_strength * size * 0.08,
-        environment.light_direction_x * tropism * size * 0.12 - environment.wind_direction_x * environment.wind_strength * size * 0.08,
+        environment.light_direction_y * tropism * size * 0.12 - wind_y * size * 0.08,
+        environment.light_direction_x * tropism * size * 0.12 - wind_x * size * 0.08,
     ))
     top = center + np.array((-height, 0.0, 0.0)) + lean
     # Taper was removed from the genome because its rasterized effect was

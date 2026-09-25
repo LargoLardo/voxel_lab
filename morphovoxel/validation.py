@@ -239,7 +239,7 @@ def build_validation_panel(
     fire_seeds: Sequence[int] = (0, 1),
     environments: Sequence[EnvironmentSpec] | None = None,
 ) -> tuple[ValidationCase, ...]:
-    """Build an exact reproducible checkpoint panel spanning the trained domain."""
+    """Build a reproducible panel; sample counts apply to each tree family."""
     if min(random_count, interpolation_steps, mutation_count) < 0:
         raise ValueError("validation panel counts must be non-negative")
     if not 0 <= mutation_strength <= 1:
@@ -250,27 +250,29 @@ def build_validation_panel(
     if unknown:
         raise ValueError(f"unknown boundary genes: {', '.join(sorted(unknown))}")
 
-    entries: list[tuple[str, TreeGenome]] = [("default", TreeGenome(family=family)) for family in TREE_FAMILIES]
-    default = TreeGenome()
-    for name in chosen_names:
-        spec = specs[name]
-        entries.extend(("boundary", default.with_values({name: value})) for value in (spec.minimum, spec.maximum))
-    if chosen_names:
-        entries.append(("corner", default.with_values({name: specs[name].minimum for name in chosen_names})))
-        entries.append(("corner", default.with_values({name: specs[name].maximum for name in chosen_names})))
-
-    entries.extend(
-        ("random", TreeGenome.random(seed + 100 + index, family=TREE_FAMILIES[index % len(TREE_FAMILIES)]))
-        for index in range(random_count)
-    )
-    if interpolation_steps:
-        left = TreeGenome.random(seed + 10_000, family=TREE_FAMILIES[0])
-        right = TreeGenome.random(seed + 10_001, family=TREE_FAMILIES[0])
+    entries: list[tuple[str, TreeGenome]] = []
+    for family_index, family in enumerate(TREE_FAMILIES):
+        default = TreeGenome(family=family)
+        family_seed = seed + family_index * 100_000
+        entries.append(("default", default))
+        for name in chosen_names:
+            spec = specs[name]
+            entries.extend(("boundary", default.with_values({name: value})) for value in (spec.minimum, spec.maximum))
+        if chosen_names:
+            entries.append(("corner", default.with_values({name: specs[name].minimum for name in chosen_names})))
+            entries.append(("corner", default.with_values({name: specs[name].maximum for name in chosen_names})))
         entries.extend(
-            ("interpolation", left.interpolate(right, amount))
-            for amount in np.linspace(0, 1, interpolation_steps + 2)[1:-1]
+            ("random", TreeGenome.random(family_seed + 100 + index, family=family))
+            for index in range(random_count)
         )
-    entries.extend(("mutation", default.mutate(mutation_strength, seed + 20_000 + index)) for index in range(mutation_count))
+        if interpolation_steps:
+            left = TreeGenome.random(family_seed + 10_000, family=family)
+            right = TreeGenome.random(family_seed + 10_001, family=family)
+            entries.extend(
+                ("interpolation", left.interpolate(right, amount))
+                for amount in np.linspace(0, 1, interpolation_steps + 2)[1:-1]
+            )
+        entries.extend(("mutation", default.mutate(mutation_strength, family_seed + 20_000 + index)) for index in range(mutation_count))
     for genome in archived:
         if not isinstance(genome, TreeGenome):
             raise ValueError("archived validation genomes must be TreeGenome values")

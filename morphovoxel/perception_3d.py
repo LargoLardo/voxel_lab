@@ -25,6 +25,16 @@ def _perception_weight(channels: int, device: torch.device, dtype: torch.dtype) 
 
 def perceive_3d(state: torch.Tensor) -> torch.Tensor:
     """Apply identity, three central gradients, and a 6-neighbor Laplacian."""
+    if state.device.type == "mps":
+        # These sparse fixed filters are faster as direct arithmetic on Metal.
+        padded = F.pad(state, (1, 1, 1, 1, 1, 1))
+        left, right = padded[:, :, 1:-1, 1:-1, :-2], padded[:, :, 1:-1, 1:-1, 2:]
+        front, back = padded[:, :, 1:-1, :-2, 1:-1], padded[:, :, 1:-1, 2:, 1:-1]
+        bottom, top = padded[:, :, :-2, 1:-1, 1:-1], padded[:, :, 2:, 1:-1, 1:-1]
+        return torch.stack((
+            state, (right - left) / 2, (back - front) / 2, (top - bottom) / 2,
+            left + right + front + back + bottom + top - 6 * state,
+        ), dim=2).flatten(1, 2)
     channels = state.shape[1]
     weight = _perception_weight(channels, state.device, state.dtype)
     return F.conv3d(state, weight, padding=1, groups=channels)

@@ -12,7 +12,8 @@ def test_tree_presets_form_a_parseable_checkpoint_pipeline():
     configs = {path.name: load_config(path) for path in (ROOT / "configs").glob("*.yaml")}
     assert all(isinstance(config, dict) for config in configs.values())
 
-    assert configs["tree_family.yaml"]["initialize_from_specialist"] == "runs/tree_specialist/checkpoints/best.pt"
+    assert configs["tree_family.yaml"]["initialize_from_checkpoint"] == "runs/tree_specialist/checkpoints/best.pt"
+    assert configs["tree_family.yaml"]["family_curriculum"] == "full"
     assert configs["tree_regeneration.yaml"]["resume"] == "runs/tree_family/checkpoints/best.pt"
     assert configs["tree_environment.yaml"]["resume"] == "runs/tree_regeneration/checkpoints/best.pt"
     assert configs["tree_ecology.yaml"]["checkpoint"] == "runs/tree_environment/checkpoints/best.pt"

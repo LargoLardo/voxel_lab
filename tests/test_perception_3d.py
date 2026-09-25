@@ -26,6 +26,7 @@ def test_cached_filters_match_stencil_and_allow_training_after_inference(device,
     state = torch.randn(2, 3, 5, 5, 5, device=device, dtype=dtype)
     with torch.inference_mode():
         perceive_3d(state)
+        _perception_weight(state.shape[1], state.device, state.dtype)
     state.requires_grad_()
     padded = F.pad(state, (1, 1, 1, 1, 1, 1))
     left, right = padded[:, :, 1:-1, 1:-1, :-2], padded[:, :, 1:-1, 1:-1, 2:]
@@ -37,6 +38,10 @@ def test_cached_filters_match_stencil_and_allow_training_after_inference(device,
     ), dim=2).flatten(1, 2)
     actual = perceive_3d(state)
     torch.testing.assert_close(actual, expected)
+    convolution = F.conv3d(state, _perception_weight(state.shape[1], state.device, state.dtype), padding=1, groups=state.shape[1])
+    torch.testing.assert_close(actual, convolution)
     actual_grad, = torch.autograd.grad(actual.square().sum(), state)
     expected_grad, = torch.autograd.grad(expected.square().sum(), state)
     torch.testing.assert_close(actual_grad, expected_grad)
+    convolution_grad, = torch.autograd.grad(convolution.square().sum(), state)
+    torch.testing.assert_close(actual_grad, convolution_grad)

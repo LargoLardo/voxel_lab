@@ -53,6 +53,20 @@ def test_tree_targets_respond_to_environment_without_changing_genome():
     assert not np.array_equal(calm[0], windy[0])
 
 
+@pytest.mark.parametrize("left,right", [
+    (EnvironmentSpec(wind_direction_x=1, wind_strength=.5), EnvironmentSpec(wind_direction_x=.5, wind_strength=1)),
+    (EnvironmentSpec(wind_direction_x=-.5, wind_direction_y=.5, wind_strength=.5),
+     EnvironmentSpec(wind_direction_x=-.25, wind_direction_y=.25, wind_strength=1)),
+    (EnvironmentSpec(), EnvironmentSpec(wind_strength=1)),
+])
+def test_identical_wind_inputs_require_identical_targets(left, right):
+    assert np.array_equal(make_environment_context(left, 16), make_environment_context(right, 16))
+    for family in TREE_FAMILIES:
+        genome = TreeGenome(family=family)
+        for a, b in zip(make_tree_target(genome, 16, left), make_tree_target(genome, 16, right)):
+            assert np.array_equal(a, b)
+
+
 def test_tree_targets_supervise_resource_crowding_and_water_responses():
     genome = TreeGenome.random(8, family="branching")
     calm = make_tree_target(genome, 16, EnvironmentSpec())
