@@ -14,6 +14,7 @@ def test_cpu_smoke_training_2d_and_3d(tmp_path):
     assert json.loads((two / "visualizations" / "live.json").read_text())["iteration"] == 10
     assert (three / "checkpoints" / "latest.pt").exists()
     assert not (three / "visualizations" / "live.png").exists()
+    assert json.loads((three / "metadata.json").read_text())["deterministic_algorithms"] is True
 
 
 def test_cpu_smoke_training_continuous_tree_family(tmp_path):

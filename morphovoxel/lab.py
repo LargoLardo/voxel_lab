@@ -241,6 +241,8 @@ class LabSession:
         self.steps += steps
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
+        elif self.device.type == "mps":
+            torch.mps.synchronize()
         self.rate = round(steps / max(time.perf_counter() - started, 1e-9), 1)
         self.version += 1
         return self.summary()

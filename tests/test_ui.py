@@ -1,6 +1,12 @@
 import json
 import hashlib
+import os
+import re
+import shutil
+import signal
+import subprocess
 import threading
+import time
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -13,9 +19,178 @@ from morphovoxel.environment import ENVIRONMENT_CHANNELS, EnvironmentSpec
 from morphovoxel.genomes import TreeGenome
 from morphovoxel.state import StateLayout
 from morphovoxel.targets import make_tree_target
-from morphovoxel.ui import CONFIGS, DashboardHandler, _inside, _launch, build_state, create_server
+from morphovoxel.ui import CONFIGS, HTML, DashboardHandler, _RecoveredProcess, _inside, _launch, build_state, create_server
 from morphovoxel.utils import steps_per_second, write_live_preview
 from morphovoxel.validation import ValidationCase, ValidationCriteria, ValidationReport, ValidationTrial
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Detached job recovery uses macOS/Linux process inspection")
+@pytest.mark.parametrize("finish", ["stop", "exit"])
+def test_restart_recovers_live_jobs_and_stop_controls(tmp_path, monkeypatch, finish):
+    # Spaces exercise matching against the unquoted argv printed by ps.
+    project = tmp_path / "project with spaces"
+    project.mkdir()
+    (project / "worker.py").write_text(
+        "import pathlib, sys, time\n"
+        "config = pathlib.Path(sys.argv[-1])\n"
+        "print('training is alive', flush=True)\n"
+        "while not config.with_suffix('.finish').exists(): time.sleep(.02)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(CONFIGS, "smoke_2d.yaml", ("2d", "Test", "Test", "worker.py"))
+    first = create_server(project, port=0)
+    payload = {"config": "smoke_2d.yaml", "content": "dimensions: 2\n", "device": "cpu", "run_name": "recovered"}
+    original = _launch(first, payload)
+    process = first.jobs[original["id"]]["process"]
+    first.server_close()
+    second = create_server(project, port=0)
+    thread = threading.Thread(target=second.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{second.server_port}"
+
+    def post(route, body):
+        request = Request(base + route, json.dumps({**body, "token": second.token}).encode(), {"Content-Type": "application/json"})
+        return json.load(urlopen(request, timeout=5))
+
+    try:
+        for _ in range(100):
+            view = json.load(urlopen(base + "/api/state", timeout=5))["jobs"][0]
+            if "training is alive" in view["log"]:
+                break
+            time.sleep(.02)
+        assert view["id"] == original["id"]
+        assert view["run_name"] == "recovered" and view["status"] == "running"
+        assert "training is alive" in view["log"]
+        assert second.jobs[original["id"]]["process"].pid == process.pid
+        with pytest.raises(ValueError, match="already active"):
+            _launch(second, payload)
+        run = project / "runs" / "recovered"
+        run.mkdir()
+        with pytest.raises(HTTPError) as error:
+            post("/api/run/delete", {"run": "recovered"})
+        assert error.value.code == 400 and run.exists()
+        with pytest.raises(HTTPError) as error:
+            post("/api/job/delete", {"job": original["id"]})
+        assert error.value.code == 400
+        if finish == "stop":
+            post("/api/stop", {"job": original["id"]})
+        else:
+            second.jobs[original["id"]]["config_path"].with_suffix(".finish").touch()
+        process.wait(timeout=5)
+        view = json.load(urlopen(base + "/api/state", timeout=5))["jobs"][0]
+        assert view["status"] == ("stopped" if finish == "stop" else "ended")
+        assert view["return_code"] is None  # A different parent cannot recover the exit code.
+        third = create_server(project, port=0)
+        try:
+            assert third.jobs == {}  # Old config files must not resurrect finished jobs.
+        finally:
+            third.server_close()
+        assert post("/api/job/delete", {"job": original["id"]}) == {"deleted": original["id"]}
+    finally:
+        second.shutdown()
+        second.server_close()
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=5)
+
+
+def test_recovered_job_does_not_follow_a_reused_pid(monkeypatch):
+    process = _RecoveredProcess(123, ("original start time", "original command"))
+    monkeypatch.setattr("morphovoxel.ui._process_snapshot", lambda pid: {123: ("new start time", "original command")})
+    assert process.poll() is not None
+
+
+def test_log_refresh_preserves_reading_position_and_only_follows_at_bottom():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to execute the dashboard JavaScript regression check")
+    function = re.search(r"function renderWithLogScroll\(.*?\n\}", HTML, re.DOTALL).group()
+    script = """
+const assert = require('node:assert/strict');
+function log(key,height,top=0,left=0){
+    const element={dataset:{logKey:key},scrollHeight:height,clientHeight:200,scrollLeft:left};
+    Object.defineProperty(element,'scrollTop',{
+        get:()=>top,
+        set:value=>{top=Math.max(0,Math.min(value,Math.max(0,height-200)))}
+    });
+    return element;
+}
+const container={
+    scrollTop:55,scrollLeft:12,
+    logs:[log('job:reading',800,80,24),log('job:following',800,599.5),log('run:short',100)],
+    querySelectorAll(){return this.logs},
+    set innerHTML(value){
+        this.logs=JSON.parse(value).map(([key,height])=>log(key,height));
+        this.scrollTop=0;this.scrollLeft=0;
+    }
+};
+""" + function + """
+// Refreshed cards can change order or gain new output independently.
+const update=JSON.stringify([['job:following',900],['job:reading',1100],['job:new',500],['run:short',600]]);
+renderWithLogScroll(container,update);
+assert.equal(container.scrollTop,55);
+assert.equal(container.scrollLeft,12);
+assert.deepEqual(container.logs.map(item=>item.scrollTop),[700,80,300,400]);
+assert.equal(container.logs[1].scrollLeft,24);
+
+// Scrolling to the top opts out of following, even during repeated refreshes.
+container.logs[0].scrollTop=0;
+renderWithLogScroll(container,update);
+assert.deepEqual(container.logs.map(item=>item.scrollTop),[0,80,300,400]);
+renderWithLogScroll(container,JSON.stringify([['run:different',1000]]));
+assert.equal(container.logs[0].scrollTop,800);
+"""
+    subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
+
+
+def test_checkpoint_selector_handles_empty_dashboard_and_preserves_selection():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to execute the dashboard JavaScript regression check")
+    function = next(line for line in HTML.splitlines() if line.startswith("function syncLabCheckpoints()"))
+    script = """
+const assert = require('node:assert/strict');
+let state = {runs: []}, lab = null, labLoading = false;
+const select = {dataset: {}, value: ''};
+const elements = {
+    '#labCheckpoint': select,
+    '#labRun': {value: ''},
+    '#labDeleteCheckpoint': {}
+};
+const $ = selector => elements[selector], esc = String;
+""" + function + """
+// Initial page load, before any run or checkpoint exists.
+syncLabCheckpoints();
+assert.equal(select.disabled, true);
+assert.match(select.innerHTML, /No checkpoints/);
+assert.equal(elements['#labDeleteCheckpoint'].disabled, true);
+
+// A new training run has no checkpoint or open lab yet.
+state.runs = [{name: 'tree', checkpoints: []}];
+elements['#labRun'].value = 'tree';
+syncLabCheckpoints();
+assert.equal(select.disabled, true);
+
+// Checkpoints appear, then an active lab is opened on the same run.
+state.runs[0].checkpoints = ['best.pt', 'latest.pt'];
+syncLabCheckpoints();
+assert.equal(select.disabled, false);
+assert.equal(elements['#labDeleteCheckpoint'].disabled, false);
+lab = {run: 'tree', checkpoint: 'latest.pt'};
+syncLabCheckpoints();
+assert.equal(select.value, 'latest.pt');
+select.value = 'best.pt';
+syncLabCheckpoints();
+assert.equal(select.value, 'best.pt');
+
+// The final run is removed and the selector returns to its empty state.
+state.runs = [];
+lab = null;
+syncLabCheckpoints();
+assert.equal(select.disabled, true);
+assert.equal(elements['#labDeleteCheckpoint'].disabled, true);
+"""
+    subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
 
 
 def test_step_rate_uses_completed_updates(monkeypatch):
@@ -53,7 +228,9 @@ def test_live_preview_drops_locked_metadata_instead_of_crashing(tmp_path, monkey
     assert not (tmp_path / ".live.tmp.json").exists()
 
 
-def test_full_presets_precede_smoke_presets_and_missing_dependencies_are_blocked(tmp_path, monkeypatch):
+@pytest.mark.parametrize("device", ["cpu", "mps"])
+def test_full_presets_precede_smoke_presets_and_missing_dependencies_are_blocked(tmp_path, monkeypatch, device):
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
     names = list(CONFIGS)
     assert names[0] == "full_experiment.yaml"
     assert names[1:6] == [
@@ -97,7 +274,7 @@ def test_full_presets_precede_smoke_presets_and_missing_dependencies_are_blocked
         job = _launch(server, {
             "config": "phase1_2d.yaml",
             "content": "run_name: phase1_2d\ndimensions: 2\n",
-            "device": "cpu",
+            "device": device,
             "live_preview": True,
         })
         assert job["run_name"] == "phase1_2d"
@@ -133,6 +310,7 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         root = urlopen(f"http://127.0.0.1:{server.server_port}/", timeout=5).read().decode()
         payload = json.load(urlopen(f"http://127.0.0.1:{server.server_port}/api/state", timeout=5))
         assert "Experiment control room" in root
+        assert "saved runs" in root and "active jobs" in root
         assert "Overview is an information page" in root
         assert "Quick settings" in root
         assert "View Checkpoints" in root
@@ -202,7 +380,9 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         assert payload["runs"][0]["settings"]["batch_size"] == 8
         assert payload["runs"][0]["model_kind"] == ""
         assert payload["runs"][0]["context_channels"] == 0
-        assert payload["hardware"]["auto_device"] in {"cpu", "cuda"}
+        assert payload["hardware"]["auto_device"] in {"cpu", "cuda", "mps"}
+        assert payload["hardware"]["mps_available"] == torch.backends.mps.is_available()
+        assert root.count('<option value="mps">Apple GPU (Metal)</option>') == 3
     finally:
         server.shutdown()
         server.server_close()

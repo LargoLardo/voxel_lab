@@ -15,7 +15,41 @@ python -m venv .venv
 
 On Linux or macOS, replace `.venv\Scripts\python` with `.venv/bin/python`.
 
+### macOS
+
+From the repository directory, install and launch with:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[test]'
+.venv/bin/python -m morphovoxel.ui --open
+```
+
+On an Apple Silicon Mac, `device: auto` selects the Apple GPU through PyTorch's
+[Metal (MPS) backend](https://docs.pytorch.org/docs/stable/notes/mps.html).
+The dashboard also offers **Apple GPU (Metal)** explicitly. Use a current native
+ARM64 Python/PyTorch installation; the Metal training, checkpoint resume,
+validation, and ecology paths are tested with PyTorch 2.14 on macOS 26.6.
+`device: cpu` works when Metal is unavailable. Smoke presets intentionally select
+CPU; choose Auto or Apple GPU in the dashboard to exercise Metal.
+
+The first full training stage can also be launched directly:
+
+```sh
+.venv/bin/python -m morphovoxel.train_3d --config configs/tree_specialist.yaml
+```
+
+For the remaining commands below, use `.venv/bin/python` and forward slashes in
+paths, such as `configs/tree_family.yaml`. Metal uses FP32 for model computation;
+exact environment metadata stays on CPU. Checkpoints preserve the Metal random
+stream. Metal training uses seeded randomness without requesting deterministic
+GPU algorithms, since indexed-gradient accumulation on MPS lacks a deterministic
+implementation. A startup message and run metadata record this mode. Repeated
+Metal runs and runs across CPU, CUDA, and Metal are not guaranteed to be identical.
+
 The dashboard opens on `http://127.0.0.1:8765`. It lists the useful full presets first and smoke checks last. Use it to launch training, follow logs and completed-rollout previews, edit genomes and environments, inspect targets, interact with checkpoints in 3D, validate candidates, and browse admitted variants. View Checkpoints supports seed placement, play/pause/single-step, reset, and erase/damage tools.
+
+The header separates **saved runs** (experiment folders, including stopped runs) from **active jobs** (training processes). On macOS and Linux, restarting the dashboard reconnects surviving jobs to their logs, previews, and Stop buttons. Training keeps running during the restart. A recovered job that later exits is labeled **ended**, since its exit code is unavailable to the new dashboard process; check its log and saved results. An intentional Stop is labeled **stopped**.
 
 Preview disposable test, cache, coverage, and build artifacts, then remove them explicitly:
 
@@ -98,7 +132,7 @@ Family training uses stratified low/high counterfactual pairs: seed, style, envi
 
 `gradient_accumulation: true` enables accumulation and `gradient_accumulation_steps` selects the number of physical batches per optimizer update. `iterations` continues to count optimizer updates, so a value of 8 uses roughly eight times the batch compute while retaining the memory footprint of one physical batch. Set `gradient_accumulation: false` to use one batch per update; the step count is then ignored.
 
-The shipped tree-family preset uses four accumulated microbatches, a `0.0003` learning rate, gradient clipping at `1.0`, and the same stronger occupancy-range/magnitude penalties used by the stability stages. On the 6 GB RTX 4050 this gives an effective batch of 32 at the default 16³/batch-8 setting, or 8 when the dashboard is changed to 32³/batch 2. Validation runs every 500 optimizer updates to limit long-panel overhead.
+The shipped tree-family preset uses one batch per optimizer update (`gradient_accumulation: false`, `gradient_accumulation_steps: 1`), a `0.0003` learning rate, gradient clipping at `1.0`, and the same stronger occupancy-range/magnitude penalties used by the stability stages. Its default 16³/batch-8 setting has an effective batch of 8. To restore the previous effective batch of 32, enable accumulation and set its step count to 4; that also restores four times the batch computation per optimizer update. Using fewer batches changes training statistics and may require different iteration counts for comparable quality. Validation runs every 500 optimizer updates to limit long-panel overhead.
 
 `latest.pt` is the final optimizer state. `best.pt` is updated when the configured deterministic validation panel matches or improves its worst-case score, so an early zero-score tie cannot freeze the pipeline at its first validation window. A checkpoint is not stable merely because it is named `best.pt`; inspect its validation report and require `accepted: true`. Full tree presets validate for at least 256 steps and include recovery trials. Archive admission is stricter: the default minimum is 512 growth/persistence steps plus 128 recovery steps across fixed stochastic and environmental cases.
 
@@ -108,7 +142,9 @@ A “new variant” means a new valid genome/style-seed combination, not proof o
 
 ## GPU guidance
 
-`device: auto` selects CUDA when the installed PyTorch build can use it and otherwise falls back to CPU. The full presets use FP32 and a `16³` world; family uses batch 8, while the longer regeneration/environment horizons use batch 4 on an RTX 4050 Laptop GPU with 6 GB VRAM. Long 256–512-step validation runs under no-gradient inference.
+`device: auto` selects CUDA when available, then Apple Metal (MPS), then CPU. The full presets use FP32 and a `16³` world; family uses batch 8, while the longer regeneration/environment horizons use batch 4 on an RTX 4050 Laptop GPU with 6 GB VRAM. Long 256–512-step validation runs under no-gradient inference.
+
+Family updates select each example's small FiLM and output matrices on the GPU and apply them with batched matrix multiplication, avoiding per-family `nonzero()` synchronization at every cellular step. The fixed 3D perception filters are cached by channel count, dtype, and device. Existing checkpoint parameter names and shapes remain compatible. These execution changes take effect in newly started processes; an already running training job keeps its loaded code and saved configuration.
 
 A focused probe of the redesigned family model on the target RTX 4050 (5.997 GiB usable, PyTorch 2.13.0+cu126) completed batch 8 at 48 growth + 32 persistence steps, all structural/counterfactual losses, backward, clipping, and Adam in 1.059 seconds. It peaked at 3088.5 MiB allocated / 3276.0 MiB reserved. Regeneration and environment presets cap their retained differentiable horizon at 96 steps, avoiding allocator-fragile 64 + 96 step graphs; their 512-step validation still runs under no-gradient inference. Close other GPU-heavy applications before full training; these probes do not predict convergence time or morphology quality.
 

@@ -18,7 +18,7 @@ from ..genomes import FAMILY_GENE_NAMES, ENVIRONMENT_GENE_NAMES, MORPHOLOGIES, T
 from ..metrics import morphology_metrics, threshold_iou
 from ..model_2d import NeuralCA2D
 from ..model_3d import NeuralCA3D, TreeFamilyNCA3D
-from ..random_utils import resolve_device, seed_everything
+from ..random_utils import fork_rng, resolve_device, seed_everything
 from ..rollout import rollout
 from ..seeding import seed_state
 from ..state import StateLayout
@@ -55,6 +55,8 @@ def _restore_rng_state(payload: dict | None) -> None:
         if len(cuda_states) != torch.cuda.device_count():
             raise ValueError("checkpoint CUDA RNG state count does not match available CUDA devices")
         torch.cuda.set_rng_state_all([_rng_byte_tensor(state) for state in cuda_states])
+    if payload.get("mps") is not None and torch.backends.mps.is_available():
+        torch.mps.set_rng_state(_rng_byte_tensor(payload["mps"]))
 
 
 def _targets(dimensions: int, labels: torch.Tensor, size: int, seed: int, conditional: bool, device, target_kind: str | None = None):
@@ -80,7 +82,7 @@ def _step_range(value, default: tuple[int, int]) -> tuple[int, int]:
 
 def _gradient_accumulation_steps(config: dict) -> int:
     enabled = config.get("gradient_accumulation", False)
-    value = config.get("gradient_accumulation_steps", 8)
+    value = config.get("gradient_accumulation_steps", 1)
     if not isinstance(enabled, bool):
         raise ValueError("gradient_accumulation must be true or false")
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -267,11 +269,10 @@ def _validate_persistence(
     checkpoints = list(range(start_step, total_steps + 1, interval))
     if not checkpoints or checkpoints[-1] != total_steps:
         checkpoints.append(total_steps)
-    fork_devices = [device.index if device.index is not None else torch.cuda.current_device()] if device.type == "cuda" else []
     was_training = model.training
     model.eval()
     try:
-        with torch.random.fork_rng(devices=fork_devices):
+        with fork_rng(device):
             torch.manual_seed(validation_seed)
             if device.type == "cuda":
                 torch.cuda.manual_seed_all(validation_seed)
@@ -294,8 +295,10 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     """Train an NCA and persist a reproducible, visualizable run."""
     config = dict(config)
     seed = int(config.get("seed", 0))
-    seed_everything(seed)
     device = resolve_device(config.get("device", "auto"))
+    seed_everything(seed, deterministic=device.type != "mps")
+    if device.type == "mps":
+        LOGGER.info("Using Apple Metal (MPS): training is seeded, but GPU operations are not guaranteed deterministic.")
     default_kind = "legacy_conditional" if conditional else "specialist"
     model_kind = str(config.get("model_kind", default_kind))
     if model_kind not in {"specialist", "tree_specialist", "legacy_conditional", "tree_family"}:
@@ -391,6 +394,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     run_metadata, started = metadata(seed, model, device), time.perf_counter()
     run_metadata.update({
         "model_kind": model_kind,
+        "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
         "checkpoint_format_version": CHECKPOINT_FORMAT_VERSION,
         "genome_schema_version": TREE_GENOME_VERSION if tree_family or tree_specialist else (1 if conditional else 0),
         "environment_schema_version": ENVIRONMENT_SCHEMA_VERSION if tree_family or tree_specialist or context_channels else 0,
@@ -582,7 +586,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                         context[reseed] = replacement.environments
                     pool_batch.style_seeds[reseed] = replacement.style_seeds
                     if pool_batch.environment_specs is not None:
-                        pool_batch.environment_specs[reseed] = replacement.environment_vectors
+                        pool_batch.environment_specs[reseed.cpu()] = replacement.environment_vectors
                     pool.replace_entries(
                         pool_batch.indices[reseed], states=fresh_states, genomes=replacement.model_genomes,
                         target_occupancy=replacement.target_occupancy,

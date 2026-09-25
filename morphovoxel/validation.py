@@ -12,6 +12,7 @@ from .damage import damage_3d
 from .environment import ENVIRONMENT_CHANNELS, EnvironmentSpec, environment_context_batch
 from .genomes import TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome, tree_genome_tensor
 from .metrics import connected_components, material_accuracy, morphology_metrics, recovery_metrics, threshold_iou
+from .random_utils import fork_rng
 from .rollout import rollout
 from .seeding import seed_state
 from .state import StateLayout
@@ -388,11 +389,10 @@ def validate_candidate(
     state = seed_state(1, world_size, layout, dimensions=3, seed_size=seed_size, random_seed=case.fire_seed, device=run_device)
     late_steps = min(128, max(1, steps // 2))
     mature_steps = steps - late_steps
-    devices = [run_device.index if run_device.index is not None else torch.cuda.current_device()] if run_device.type == "cuda" else []
     was_training = bool(model.training)
     model.eval()
     try:
-        with torch.inference_mode(), torch.random.fork_rng(devices=devices):
+        with torch.inference_mode(), fork_rng(run_device):
             torch.manual_seed(case.fire_seed)
             if run_device.type == "cuda":
                 torch.cuda.manual_seed_all(case.fire_seed)

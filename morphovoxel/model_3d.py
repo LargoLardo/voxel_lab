@@ -124,15 +124,16 @@ class TreeFamilyNCA3D(nn.Module):
             raise ValueError("this model was created without environment context channels")
         hidden = F.relu(self.shared(features))
         continuous = genome[:, self.family_count :].to(hidden)
-        delta = torch.zeros_like(state)
-        for index, (film, head) in enumerate(zip(self.film, self.heads)):
-            selected = torch.nonzero(family_ids == index, as_tuple=False).flatten()
-            selected_hidden = hidden.index_select(0, selected)
-            gamma, beta = film(continuous.index_select(0, selected)).chunk(2, 1)
-            family_delta = head(F.relu(
-                selected_hidden * (1 + gamma[..., None, None, None]) + beta[..., None, None, None]
-            ))
-            delta = delta.index_copy(0, selected, family_delta)
+        # Select the small parameter matrices instead of finding variable-sized
+        # voxel batches with nonzero(), which synchronizes the GPU at every step.
+        film_weight = torch.stack([film.weight for film in self.film])[family_ids]
+        film_bias = torch.stack([film.bias for film in self.film])[family_ids]
+        modulation = torch.bmm(film_weight, continuous.unsqueeze(2)).squeeze(2) + film_bias
+        gamma, beta = modulation.chunk(2, 1)
+        modulated = F.relu(hidden * (1 + gamma[..., None, None, None]) + beta[..., None, None, None])
+        head_weight = torch.stack([head.weight[:, :, 0, 0, 0] for head in self.heads])[family_ids]
+        head_bias = torch.stack([head.bias for head in self.heads])[family_ids]
+        delta = torch.bmm(head_weight, modulated.flatten(2)).reshape_as(state) + head_bias[..., None, None, None]
         fire = torch.rand_like(state[:, :1]) <= self.fire_rate if fire_mask is None else fire_mask
         if fire.shape != state[:, :1].shape:
             raise ValueError("fire_mask must have shape [B,1,D,H,W]")

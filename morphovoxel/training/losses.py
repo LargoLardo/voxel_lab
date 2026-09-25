@@ -28,7 +28,8 @@ def _distance_field(target: torch.Tensor) -> torch.Tensor:
         for step in range(1, maximum + 1):
             expanded = pool(reached.float(), 3, stride=1, padding=1) > 0
             shell = expanded & remaining
-            distance[shell] = step / maximum
+            # Fixed-shape masking avoids nonzero() and a GPU-to-CPU wait on MPS.
+            distance.masked_fill_(shell, step / maximum)
             reached |= shell
             remaining &= ~shell
     return distance[:, 0]

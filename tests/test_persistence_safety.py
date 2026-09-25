@@ -4,7 +4,22 @@ import torch
 from morphovoxel.model_2d import NeuralCA2D
 from morphovoxel.model_3d import NeuralCA3D
 from morphovoxel.state import StateLayout
-from morphovoxel.training.losses import morphology_loss, stability_loss
+from morphovoxel.training.losses import _distance_field, morphology_loss, stability_loss
+
+
+@pytest.mark.parametrize("shape", [(3, 5), (3, 4, 5)])
+@pytest.mark.parametrize("device", ["cpu", pytest.param("mps", marks=pytest.mark.skipif(
+    not torch.backends.mps.is_available(), reason="Apple GPU unavailable",
+))])
+def test_distance_field_matches_chebyshev_distance_including_empty_targets(shape, device):
+    target = torch.zeros(3, *shape, device=device)
+    target[(0, *(0 for _ in shape))] = 1
+    target[1] = 1
+    coordinates = torch.meshgrid(*(torch.arange(size, device=device) for size in shape), indexing="ij")
+    expected = torch.zeros_like(target)
+    expected[0] = torch.stack(coordinates).amax(0) / max(shape)
+    # Fully occupied and empty targets both retain zero distance, as before.
+    torch.testing.assert_close(_distance_field(target), expected)
 
 
 @pytest.mark.parametrize(

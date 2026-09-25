@@ -213,6 +213,7 @@ def save_checkpoint(
             "numpy": np.random.get_state(),
             "torch": torch.get_rng_state(),
             "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_initialized() else None,
+            "mps": torch.mps.get_rng_state() if torch.backends.mps.is_available() else None,
         },
     }
     torch.save(payload, path)
@@ -298,7 +299,10 @@ def load_checkpoint(
             f"Checkpoint not found: {path}. Train the preset that creates it first, "
             "launch the Full experiment, or correct the checkpoint path."
         )
-    payload = torch.load(path, map_location=map_location, weights_only=False)
+    # MPS cannot deserialize the pool's float64 metadata. Model/optimizer loaders
+    # transfer their tensors to the model's device while metadata stays on CPU.
+    load_location = "cpu" if str(map_location).startswith("mps") else map_location
+    payload = torch.load(path, map_location=load_location, weights_only=False)
     if not isinstance(payload, dict):
         raise CheckpointCompatibilityError(f"checkpoint {path} payload must be a mapping")
     metadata, legacy = load_model_payload(

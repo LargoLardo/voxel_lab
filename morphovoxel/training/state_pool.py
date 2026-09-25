@@ -81,7 +81,7 @@ class StatePool:
             self._sample(self.target_occupancy, indices, device),
             self._sample(self.target_materials, indices, device),
             self._sample(self.environments, indices, device),
-            self._sample(self.environment_specs, indices, device),
+            self._sample(self.environment_specs, indices, "cpu"),
             self._sample(self.style_seeds, indices, device),
             self._sample(self.condition_ids, indices, device),
             self._sample(self.pair_ids, indices, device),
@@ -131,7 +131,7 @@ class StatePool:
         return PoolBatch(
             indices.to(device), self.states[indices].to(device), self.genomes[indices].to(device), self.ages[indices].to(device),
             self._sample(self.target_occupancy, indices, device), self._sample(self.target_materials, indices, device),
-            self._sample(self.environments, indices, device), self._sample(self.environment_specs, indices, device),
+            self._sample(self.environments, indices, device), self._sample(self.environment_specs, indices, "cpu"),
             self._sample(self.style_seeds, indices, device), self._sample(self.condition_ids, indices, device),
             self._sample(self.pair_ids, indices, device),
         )

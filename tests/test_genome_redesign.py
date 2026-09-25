@@ -1,5 +1,9 @@
+import copy
+
 import numpy as np
+import pytest
 import torch
+from torch.nn import functional as F
 
 from morphovoxel.checkpointing import convert_specialist_to_family
 from morphovoxel.environment import EnvironmentSpec
@@ -11,6 +15,7 @@ from morphovoxel.genomes import (
     TreeGenome,
 )
 from morphovoxel.model_3d import NeuralCA3D, TreeFamilyNCA3D
+from morphovoxel.perception_3d import perceive_3d
 from morphovoxel.rollout import rollout
 from morphovoxel.state import StateLayout
 from morphovoxel.targets import make_tree_target
@@ -100,6 +105,49 @@ def test_family_model_conversion_preserves_specialist_then_genes_receive_gradien
     assert torch.allclose(actual, expected, atol=1e-6)
     actual.square().mean().backward()
     assert any(layer.weight.grad is not None and bool((layer.weight.grad != 0).any()) for layer in family.film)
+
+
+@pytest.mark.parametrize("device", ["cpu", pytest.param("mps", marks=pytest.mark.skipif(
+    not torch.backends.mps.is_available(), reason="Apple GPU unavailable",
+))])
+@pytest.mark.parametrize("families", [[0, 1, 2, 3, 0, 2], [1, 1]])
+def test_batched_family_routing_preserves_outputs_and_gradients(device, families):
+    torch.manual_seed(17)
+    model = TreeFamilyNCA3D(5, hidden=8, genome_size=15, context_channels=2).to(device)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.normal_(0, 0.1)
+    reference = copy.deepcopy(model)
+    state = torch.rand(len(families), 5, 5, 5, 5, device=device, requires_grad=True)
+    original_state = state.detach().clone().requires_grad_()
+    genome = torch.randn(len(families), 15, device=device)
+    genome[:, :4] = F.one_hot(torch.tensor(families, device=device), 4)
+    genome.requires_grad_()
+    original_genome = genome.detach().clone().requires_grad_()
+    context = torch.rand(len(families), 2, 5, 5, 5, device=device)
+    fire = torch.rand_like(state[:, :1]) < 0.5
+
+    # Independent reference: apply the selected family's original Linear and
+    # Conv3d modules to each example, including repeated and absent families.
+    hidden = F.relu(reference.shared(torch.cat((perceive_3d(original_state), context), 1)))
+    deltas = []
+    for sample, family in enumerate(families):
+        gamma, beta = reference.film[family](original_genome[sample:sample + 1, 4:]).chunk(2, 1)
+        modulated = F.relu(hidden[sample:sample + 1] * (1 + gamma[..., None, None, None]) + beta[..., None, None, None])
+        deltas.append(reference.heads[family](modulated))
+    before = reference.living_mask(original_state)
+    updated = original_state + torch.cat(deltas) * fire * before
+    expected = updated * (before & reference.living_mask(updated))
+    actual = model(state, genome, context, fire)
+    torch.testing.assert_close(actual, expected, atol=2e-6, rtol=2e-5)
+    actual.square().sum().backward()
+    expected.square().sum().backward()
+    torch.testing.assert_close(state.grad, original_state.grad, atol=2e-5, rtol=2e-4)
+    torch.testing.assert_close(genome.grad, original_genome.grad, atol=2e-5, rtol=2e-4)
+    assert model.state_dict().keys() == reference.state_dict().keys()
+    for parameter, original in zip(model.parameters(), reference.parameters()):
+        expected_grad = original.grad if original.grad is not None else torch.zeros_like(original)
+        torch.testing.assert_close(parameter.grad, expected_grad, atol=2e-4, rtol=2e-4)
 
 
 def test_structural_and_counterfactual_losses_reject_a_blurry_average():

@@ -62,7 +62,8 @@ def _pack_family_data(
         target_occupancy=torch.as_tensor(np.stack(occupancy), device=device),
         target_materials=torch.as_tensor(np.stack(materials), dtype=torch.long, device=device),
         environments=environment_context_batch(environments, size, device=device),
-        environment_vectors=torch.stack([environment.vector() for environment in environments]).to(device),
+        # Metadata contains exact seeds in float64; Metal cannot store this dtype.
+        environment_vectors=torch.stack([environment.vector() for environment in environments]),
         style_seeds=torch.tensor([genome.style_seed for genome in genomes], dtype=torch.long, device=device),
         creation_methods=methods,
         condition_ids=torch.tensor(condition_ids if condition_ids is not None else [-1] * count, dtype=torch.long, device=device),
