@@ -329,11 +329,12 @@ def _training_progress(job: dict[str, Any], log: str, *, running: bool) -> dict[
         elapsed = now - samples[0][0]
         if elapsed >= 1:
             job["_iterations_per_second"] = (len(losses) - samples[0][1]) / elapsed
+    recent_losses = losses[-200:]
     return {
         "iteration": iteration,
         "completed_iterations": len(losses),
         "iterations_per_second": job.get("_iterations_per_second"),
-        "average_loss": math.fsum(losses) / len(losses),
+        "average_loss": math.fsum(recent_losses) / len(recent_losses),
     }
 
 
@@ -1116,7 +1117,7 @@ document.querySelectorAll('.nav button[data-page]').forEach(button=>button.oncli
 function trainingStats(progress){
   if(!progress)return '';
   const rate=progress.iterations_per_second;
-  return `<div class="lab-stats" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="lab-stat"><b>${Number(progress.iteration).toLocaleString()}</b><small>iteration</small></div><div class="lab-stat" title="Completed training iterations per second over the last ~30 seconds, including validation pauses. Measuring starts when the dashboard connects."><b>${rate==null?'Measuring…':Number(rate).toFixed(2)}</b><small>iterations/second</small></div><div class="lab-stat" title="Mean loss across all completed training iterations logged by this job."><b>${Number(progress.average_loss).toFixed(4)}</b><small>average loss</small></div></div>`;
+  return `<div class="lab-stats" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="lab-stat"><b>${Number(progress.iteration).toLocaleString()}</b><small>iteration</small></div><div class="lab-stat" title="Completed training iterations per second over the last ~30 seconds, including validation pauses. Measuring starts when the dashboard connects."><b>${rate==null?'Measuring…':Number(rate).toFixed(2)}</b><small>iterations/second</small></div><div class="lab-stat" title="Mean loss over the latest 200 completed training iterations, or all available iterations until 200 finish."><b>${Number(progress.average_loss).toFixed(4)}</b><small>average loss · last ${Math.min(200,progress.completed_iterations)}</small></div></div>`;
 }
 function jobs(){const running=state.jobs.filter(job=>job.status==='running'),runNames=new Set(state.runs.map(run=>run.name));$('#jobCount').textContent=`${running.length} active jobs`;return state.jobs.map(job=>{const canShowStats=runNames.has(job.run_name),actions=`${canShowStats?`<button class="btn" data-job-stats="${esc(job.run_name)}">Stats</button>`:''}${job.status==='running'?`<button class="btn danger" data-stop-job="${esc(job.id)}">Stop</button>`:`<button class="btn danger" data-delete-job="${esc(job.id)}">Delete job</button>`}`;return`<article class="job"><div class="job-row"><div><b>${esc(job.run_name)}</b><div class="status ${job.status}">${esc(job.status)}</div></div><div class="actions">${actions}</div></div>${trainingStats(job.progress)}${job.live?`<figure class="live-view"><img src="${esc(job.live.url)}" alt="Live organism state for ${esc(job.run_name)}"><figcaption>${esc(liveLabel(job.live))}</figcaption></figure>`:''}<pre data-log-key="job:${esc(job.id)}">${esc(job.log||'Waiting for output…')}</pre></article>`}).join('')}
 function bindRunControls(){document.querySelectorAll('[data-run-card]').forEach(card=>card.onclick=()=>showRun(card.dataset.runCard));document.querySelectorAll('[data-run-stats],[data-job-stats]').forEach(button=>button.onclick=event=>{event.stopPropagation();showRun(button.dataset.runStats||button.dataset.jobStats)});document.querySelectorAll('[data-run-delete]').forEach(button=>button.onclick=event=>{event.stopPropagation();deleteRun(button.dataset.runDelete)});document.querySelectorAll('[data-stop-job]').forEach(button=>button.onclick=()=>stopJob(button.dataset.stopJob));document.querySelectorAll('[data-delete-job]').forEach(button=>button.onclick=()=>deleteJob(button.dataset.deleteJob))}

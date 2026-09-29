@@ -404,6 +404,19 @@ def test_job_training_stats_work_without_previews_and_survive_log_tail_truncatio
     recovered = _job_view({key: value for key, value in job.items() if not key.startswith("_")})
     assert recovered["progress"]["average_loss"] == 5.0
     assert recovered["progress"]["iterations_per_second"] is None
+    # Older losses must leave the rolling window without capping the rate counter.
+    log.write_text("".join(f"INFO step={step} loss={100 if step <= 80 else 2}\n" for step in range(1, 281)))
+    now += 2
+    progress = _job_view(job)["progress"]
+    assert progress["average_loss"] == 2.0
+    assert progress["completed_iterations"] == 280
+    with log.open("a") as stream:
+        stream.write("INFO step=281 loss=4\n")
+    now += 2
+    progress = _job_view(job)["progress"]
+    assert progress["average_loss"] == pytest.approx(2.01)
+    assert progress["completed_iterations"] == 281
+    assert progress["iterations_per_second"] > 0
 
 
 def test_running_job_renders_training_stats_without_an_image():
@@ -416,17 +429,20 @@ def test_running_job_renders_training_stats_without_an_image():
 const assert=require('node:assert/strict');
 const count={}, $=()=>count, esc=String;
 const state={runs:[],jobs:[{id:'test',run_name:'tree',status:'running',live:null,log:'training',
-    progress:{iteration:12003,iterations_per_second:1.25,average_loss:3.123456}}]};
+    progress:{iteration:12003,completed_iterations:260,iterations_per_second:1.25,average_loss:3.123456}}]};
 """ + function + "\n" + render + r"""
 let html=jobs();
 assert.match(html,/1.25/);
 assert.match(html,/iterations\/second/);
 assert.match(html,/3.1235/);
 assert.match(html,/average loss/);
+assert.match(html,/last 200/);
 assert.doesNotMatch(html,/<img/);
 assert.match(html,/data-stop-job/);
 state.jobs[0].progress.iterations_per_second=null;
 assert.match(jobs(),/Measuring…/);
+state.jobs[0].progress.completed_iterations=3;
+assert.match(jobs(),/last 3/);
 state.jobs[0].progress=null;
 assert.doesNotMatch(jobs(),/NaN|average loss/);
 """
