@@ -90,6 +90,59 @@ def test_pair_sampling_includes_underrepresented_branch_leaf_strata():
     assert signatures == {(False, False), (False, True), (True, False), (True, True)}
 
 
+def test_pair_metadata_cache_invalidates_replacements_appends_and_restores():
+    from morphovoxel.training.losses import _distance_field
+    from morphovoxel.training.trainer import _restore_pool
+
+    target = torch.zeros(8, 3, 3, 3)
+    target[:, 1, 1, 1] = 1
+    materials = target.long() * 2
+    pool = StatePool(
+        target[:, None], torch.zeros(8, 1), target_occupancy=target,
+        target_materials=materials, target_distances=_distance_field(target),
+        condition_ids=torch.arange(4).repeat_interleave(2),
+        pair_ids=torch.arange(4).repeat_interleave(2),
+    )
+
+    def compare_with_uncached():
+        reference = StatePool(**pool.state_dict())
+        for cursor in range(6):
+            reference._pair_metadata.clear()
+            expected = reference.sample_stratified_pairs(4, cursor)
+            actual = pool.sample_stratified_pairs(4, cursor)
+            torch.testing.assert_close(actual.indices, expected.indices)
+            torch.testing.assert_close(actual.target_distances, _distance_field(actual.target_occupancy))
+
+    compare_with_uncached()
+    retained = pool._pair_metadata[0]
+    selected = torch.tensor([4, 5])
+    replacement = torch.ones_like(target[:2])
+    pool.replace_entries(
+        selected, states=replacement[:, None], genomes=torch.ones(2, 1),
+        target_occupancy=replacement, target_materials=replacement.long() * 3,
+        target_distances=_distance_field(replacement), condition_ids=torch.tensor([7, 7]),
+        pair_ids=torch.tensor([9, 9]),
+    )
+    assert 2 not in pool._pair_metadata and 9 not in pool._pair_metadata
+    compare_with_uncached()
+    assert pool._pair_metadata[0] is retained
+    assert not (pool.target_distances[selected] > 0).any()
+
+    legacy = pool.state_dict()
+    legacy.pop("target_distances")
+    restored = _restore_pool(legacy)
+    torch.testing.assert_close(restored.target_distances, pool.target_distances)
+    assert not restored._pair_metadata
+    extra = StatePool(
+        target[:2, None], torch.zeros(2, 1), target_occupancy=target[:2],
+        target_materials=materials[:2], target_distances=_distance_field(target[:2]),
+        condition_ids=torch.tensor([10, 10]), pair_ids=torch.tensor([10, 10]),
+    )
+    pool.append_from(extra, 0)
+    compare_with_uncached()
+    assert 10 in pool._pair_metadata
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
 def test_cuda_pool_indices_can_select_reseed_entries_and_commit_to_cpu():
     pool = StatePool(torch.zeros(4, 2), torch.arange(4).view(4, 1).float())

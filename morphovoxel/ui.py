@@ -15,7 +15,9 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
+from collections import deque
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,7 +27,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import torch
 
-from .config import load_config, save_config
+from .config import load_config, resolve_hidden_layers, save_config
 from .environment import ENVIRONMENT_CHANNELS, ENVIRONMENT_PARAMETERS, ENVIRONMENT_SCHEMA_VERSION, EnvironmentSpec
 from .genomes import TREE_FAMILIES, TREE_GENE_SPECS, TREE_GENOME_VERSION, TreeGenome
 from .lab import LabSession, find_checkpoint, list_checkpoints
@@ -184,7 +186,7 @@ def build_state(project_root: Path) -> dict[str, Any]:
                     "model_kind", "dimensions", "world_size", "batch_size", "iterations",
                     "rollout_steps", "persistence_steps", "learning_rate", "device",
                     "gradient_accumulation", "gradient_accumulation_steps",
-                    "family_curriculum",
+                    "family_curriculum", "model_width", "hidden_layers",
                 )
                 if key in run_config
             },
@@ -300,6 +302,41 @@ def _recover_jobs(server: "DashboardServer") -> None:
             }
 
 
+def _training_progress(job: dict[str, Any], log: str, *, running: bool) -> dict[str, Any] | None:
+    """Read completed optimizer iterations, independently of image previews."""
+    losses, iteration = [], 0
+    for match in re.finditer(r"^INFO step=(\d+) loss=(\S+)[^\n]*\n", log, re.MULTILINE):
+        try:
+            loss = float(match[2])
+        except ValueError:
+            continue
+        if math.isfinite(loss):
+            losses.append(loss)
+            iteration = int(match[1])
+    if not losses:
+        return None
+    samples = job.setdefault("_rate_samples", deque())
+    if samples and len(losses) < samples[-1][1]:
+        samples.clear()
+        job.pop("_iterations_per_second", None)
+    if running:
+        now = time.monotonic()
+        # Bound observations even with several browser tabs polling the server.
+        if not samples or now - samples[-1][0] >= 1:
+            samples.append((now, len(losses)))
+        while len(samples) > 2 and samples[1][0] <= now - 30:
+            samples.popleft()
+        elapsed = now - samples[0][0]
+        if elapsed >= 1:
+            job["_iterations_per_second"] = (len(losses) - samples[0][1]) / elapsed
+    return {
+        "iteration": iteration,
+        "completed_iterations": len(losses),
+        "iterations_per_second": job.get("_iterations_per_second"),
+        "average_loss": math.fsum(losses) / len(losses),
+    }
+
+
 def _job_view(job: dict[str, Any]) -> dict[str, Any]:
     process = job["process"]
     return_code = process.poll()
@@ -309,7 +346,7 @@ def _job_view(job: dict[str, Any]) -> dict[str, Any]:
     elif isinstance(process, _RecoveredProcess) and return_code is not None:
         status = "ended"
     try:
-        log = "\n".join(job["log_path"].read_text(encoding="utf-8", errors="replace").splitlines()[-80:])
+        log = job["log_path"].read_text(encoding="utf-8", errors="replace")
     except OSError:
         log = ""
     live = None
@@ -328,7 +365,8 @@ def _job_view(job: dict[str, Any]) -> dict[str, Any]:
         "id": job["id"], "config": job["config"], "run_name": job["run_name"],
         "command": job["command"], "started": job["started"], "status": status,
         "return_code": None if isinstance(process, _RecoveredProcess) else return_code,
-        "log": log, "live": live,
+        "log": "\n".join(log.splitlines()[-80:]), "live": live,
+        "progress": _training_progress(job, log, running=status == "running"),
     }
 
 
@@ -352,14 +390,17 @@ def _launch(server: "DashboardServer", payload: dict[str, Any]) -> dict[str, Any
         raise ValueError("live_preview must be true or false")
     overrides = {"device": device, "live_preview": live_preview}
     if filename == "ecology_experiments.yaml":
-        base = config.get("base")
-        if not isinstance(base, dict):
+        model_config = config.get("base")
+        if not isinstance(model_config, dict):
             raise ValueError("ecology experiment base must be a mapping")
-        base.update(overrides)
     elif filename == "full_experiment.yaml":
-        config["overrides"] = overrides
+        model_config = config.setdefault("overrides", {})
+        if not isinstance(model_config, dict):
+            raise ValueError("full experiment overrides must be a mapping")
     else:
-        config.update(overrides)
+        model_config = config
+    resolve_hidden_layers(model_config.get("model_width", 32), model_config.get("hidden_layers"))
+    model_config.update(overrides)
     config["dashboard_preset"] = filename
 
     if filename != "full_experiment.yaml":
@@ -774,7 +815,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         "architecture": {
                             "dimensions": lab.dimensions,
                             "state_channels": lab.layout.channels,
-                            "model_width": int(lab.config.get("model_width", 32)),
+                            "model_width": getattr(lab.model, "hidden_layers", (int(lab.config.get("model_width", 32)),))[0],
+                            "hidden_layers": list(getattr(lab.model, "hidden_layers", (int(lab.config.get("model_width", 32)),))),
                             "genome_size": int(getattr(lab.model, "genome_size", 0)),
                             "context_channels": int(getattr(lab.model, "context_channels", 0)),
                         },
@@ -968,10 +1010,29 @@ function syncEvaluationRuns(){const select=$('#evaluationRun'),previous=select.v
 function metricExtreme(trials,name,mode='min',field='metrics'){const values=trials.map(trial=>trial[field]?.[name]).filter(value=>Number.isFinite(Number(value))).map(Number);return values.length?(mode==='max'?Math.max(...values):Math.min(...values)):NaN}
 function evaluationReport(result){const reports=result.reports.map(value=>value.report),allTrials=reports.flatMap(report=>report.trials),failureCount=allTrials.filter(trial=>!trial.accepted).length,trialCount=allTrials.length;let html=`<div class="evaluation-summary"><div><b class="${result.accepted?'':'failed'}">${result.accepted?'PASS':'FAIL'}</b><small>overall verdict</small></div><div><b>${Number(result.worst_score).toFixed(3)}</b><small>worst score</small></div><div><b>${trialCount-failureCount}/${trialCount}</b><small>accepted trials</small></div><div><b>${result.horizons.join(' + ')}</b><small>undamaged steps</small></div></div>`;for(const [index,value] of result.reports.entries()){const report=value.report,trials=report.trials,criteria=report.criteria,checks=[['Finite state',metricExtreme(trials,'finite_state'),1,'≥'],['Bounded state',metricExtreme(trials,'bounded_state'),1,'≥'],['Max channel magnitude',metricExtreme(trials,'max_channel_magnitude','max'),criteria.state_limit,'≤'],['Occupancy violation',metricExtreme(trials,'occupancy_range_violation_fraction','max'),criteria.max_occupancy_violation_fraction,'≤'],['Target IoU',metricExtreme(trials,'target_iou'),criteria.min_target_iou,'≥'],['Late drift',metricExtreme(trials,'late_drift','max'),criteria.max_late_drift,'≤'],['Regeneration',metricExtreme(trials,'regeneration_score'),criteria.min_regeneration_score,'≥'],['Largest component',metricExtreme(trials,'largest_component_fraction','min','descriptors'),criteria.min_largest_component_fraction,'≥']];html+=`<section class="evaluation-report"><h3>${result.horizons[index].toLocaleString()}-step horizon · ${trials.length} trials · ${report.accepted?'PASS':'FAIL'}</h3><div class="table-wrap"><table><thead><tr><th>Criterion</th><th>Worst observed</th><th>Required</th><th>Result</th></tr></thead><tbody>${checks.map(([label,observed,required,direction])=>{const pass=direction==='≤'?observed<=required:observed>=required;return`<tr><td>${label}</td><td>${Number(observed).toFixed(4)}</td><td>${direction} ${Number(required).toFixed(4)}</td><td class="status ${pass?'':'failed'}">${pass?'PASS':'FAIL'}</td></tr>`}).join('')}</tbody></table></div>`;const failed=trials.filter(trial=>trial.failure_reasons.length);if(failed.length)html+=`<details class="lab-section"><summary>${failed.length} failed cases</summary><div class="lab-section-body"><div class="table-wrap"><table><thead><tr><th>Case</th><th>Family</th><th>Environment seed</th><th>Reasons</th></tr></thead><tbody>${failed.map(trial=>`<tr><td>${esc(trial.case.case_id)}</td><td>${esc(trial.case.genome.family)}</td><td>${esc(trial.case.environment.seed)}</td><td>${esc(trial.failure_reasons.join(', '))}</td></tr>`).join('')}</tbody></table></div></div></details>`;html+='</section>'}html+=`<div class="lab-note ${result.accepted?'active':'pending'}">${result.accepted?'Every selected case passed. This is strong finite-horizon evidence, not proof of infinite persistence.':'Do not promote this checkpoint as stable. Inspect the failed criteria and continue stability/regeneration training.'}</div>`;return html}
 async function evaluateCheckpoint(){let seeds;try{seeds=$('#evaluationSeeds').value.split(',').map(value=>value.trim()).filter(Boolean).map(Number);if(!seeds.length||seeds.length>8||seeds.some(value=>!Number.isInteger(value)||value<0||value>=2**31))throw new Error('Enter 1 to 8 comma-separated integer seeds');const button=$('#evaluationRunButton');button.disabled=true;button.textContent='Evaluating…';$('#evaluationStatus').textContent='RUNNING';$('#evaluationResults').innerHTML='<div class="empty">Running long-horizon inference and damage recovery. Keep this page open…</div>';const result=await labPost('/api/evaluate',{run:$('#evaluationRun').value,checkpoint:$('#evaluationCheckpoint').value,device:$('#evaluationDevice').value,scope:$('#evaluationScope').value,horizons:$('#evaluationHorizons').value.split(',').map(Number),recovery_steps:Number($('#evaluationRecovery').value),fire_seeds:seeds});$('#evaluationStatus').textContent=result.accepted?'PASSED':'FAILED';$('#evaluationStatus').classList.toggle('failed',!result.accepted);$('#evaluationResults').innerHTML=evaluationReport(result)}catch(error){$('#evaluationStatus').textContent='ERROR';$('#evaluationStatus').classList.add('failed');$('#evaluationResults').innerHTML=`<div class="lab-note pending">${esc(error.message)}</div>`;toast(error.message,true)}finally{$('#evaluationRunButton').textContent='Evaluate checkpoint';syncEvaluationCheckpoints()}}
-const sliderSpecs=[['iterations','Training iterations',1,5000,1],['world_size','World size',8,64,2],['batch_size','Batch size',1,16,1],['model_width','Model width',4,128,4],['hidden_channels','Hidden channels',0,32,1],['fire_rate','Fire rate',.05,1,.05],['growth_steps','Growth steps',1,128,1],['recovery_steps','Recovery steps',1,128,1],['organisms','Organisms',1,8,1],['steps','Simulation steps',1,256,1]];
+const sliderSpecs=[['iterations','Training iterations',1,5000,1],['world_size','World size',8,64,2],['batch_size','Batch size',1,16,1],['hidden_channels','Voxel memory channels',0,32,1],['fire_rate','Fire rate',.05,1,.05],['growth_steps','Growth steps',1,128,1],['recovery_steps','Recovery steps',1,128,1],['organisms','Organisms',1,8,1],['steps','Simulation steps',1,256,1]];
 function yamlNumber(key){const match=$('#editor').value.match(new RegExp(`^(\\s*${key}:\\s*)([-+]?\\d*\\.?\\d+)(\\s*(?:#.*)?)$`,'m'));return match?Number(match[2]):null}
 function setYamlNumber(key,value){const pattern=new RegExp(`^(\\s*${key}:\\s*)([-+]?\\d*\\.?\\d+)(\\s*(?:#.*)?)$`,'m');$('#editor').value=$('#editor').value.replace(pattern,(_,before,_old,after)=>before+value+after)}
-function renderSliders(){const controls=sliderSpecs.flatMap(([key,label,min,max,step])=>{const value=yamlNumber(key);if(value===null)return[];return[`<label class="slider"><span class="slider-head"><span>${label}</span><output>${value}</output></span><input type="range" data-yaml-key="${key}" min="${Math.min(min,value)}" max="${Math.max(max,value)}" step="${step}" value="${value}" aria-label="${label}"></label>`]}).join('');$('#quickControls').innerHTML=controls||'<span class="hint">Use the YAML editor for this preset.</span>';document.querySelectorAll('[data-yaml-key]').forEach(input=>input.oninput=()=>{const value=Number(input.value);setYamlNumber(input.dataset.yamlKey,value);input.closest('.slider').querySelector('output').value=value})}
+const hiddenLayersPattern=/^hidden_layers:[^\n]*(?:\n(?:[ \t]+[^\n]*|-[ \t]+[^\n]*|#[^\n]*|(?=\n|$)))*/m;
+function hiddenLayerText(){
+  const match=$('#editor').value.match(hiddenLayersPattern),fallback=/^model_width:/m.test($('#editor').value)?String(yamlNumber('model_width')):null;
+  if(!match)return fallback;
+  const value=match[0].replace(/^hidden_layers:[ \t]*/,'').replace(/#[^\n]*/g,'').trim();
+  if(['','null','~'].includes(value))return fallback??'32';
+  if(/^\[\s*\d+(?:\s*,\s*\d+)*\s*\]$/.test(value))return value.slice(1,-1).split(',').map(item=>item.trim()).join(', ');
+  const lines=match[0].replace(/#[^\n]*/g,'').split('\n');
+  if(lines.shift().trim()!=='hidden_layers:')return null;
+  const items=lines.map(item=>item.trim()).filter(Boolean);
+  return items.length&&items.every(item=>/^-\s+\d+$/.test(item))?items.map(item=>item.replace(/^-\s+/,'')).join(', '):null;
+}
+function setHiddenLayers(value){
+  const text=value.trim(),widths=text.split(',').map(Number);
+  if(!/^\d+(?:\s*,\s*\d+)*$/.test(text)||widths.some(width=>!Number.isSafeInteger(width)||width<1))throw new Error('Enter positive neuron counts separated by commas, e.g. 32, 32');
+  const editor=$('#editor'),pattern=hiddenLayersPattern,line=`hidden_layers: [${widths.join(', ')}]`;
+  editor.value=pattern.test(editor.value)?editor.value.replace(pattern,line):editor.value+`${editor.value.endsWith('\n')?'':'\n'}${line}\n`;
+  setYamlNumber('model_width',widths[0]);
+}
+function renderSliders(){const architecture=hiddenLayerText()!==null?`<label class="field"><span>Hidden layers (neurons each)</span><input id="hiddenLayers" value="${esc(hiddenLayerText())}" placeholder="32, 32" aria-label="Hidden layers (neurons each)"><small class="hint">32, 32 gives two layers of 32 neurons. Checkpoints must use the same layer sizes.</small></label>`:'';const controls=sliderSpecs.flatMap(([key,label,min,max,step])=>{const value=yamlNumber(key);if(value===null)return[];return[`<label class="slider"><span class="slider-head"><span>${label}</span><output>${value}</output></span><input type="range" data-yaml-key="${key}" min="${Math.min(min,value)}" max="${Math.max(max,value)}" step="${step}" value="${value}" aria-label="${label}"></label>`]}).join('');$('#quickControls').innerHTML=architecture+controls||'<span class="hint">Use the YAML editor for this preset.</span>';const input=$('#hiddenLayers');if(input)input.onchange=()=>{try{setHiddenLayers(input.value);input.setCustomValidity('')}catch(error){input.setCustomValidity(error.message);input.reportValidity()}};document.querySelectorAll('[data-yaml-key]').forEach(input=>input.oninput=()=>{const value=Number(input.value);setYamlNumber(input.dataset.yamlKey,value);input.closest('.slider').querySelector('output').value=value})}
 const presetNotes={'full_experiment.yaml':'Recommended default: trains the 2D, 3D, genome-conditioned, regeneration, and ecology phases in dependency order. This can run for hours.','phase1_2d.yaml':'Trains one rule to grow one flat 2D target.','phase2_3d.yaml':'Trains one rule to grow one 3D target.','phase3_conditional.yaml':'Trains one shared 3D rule whose one-hot genome selects among four target morphologies.','phase4_regeneration_training.yaml':'Trains the genome-conditioned 3D rule on damaged state-pool samples and creates the checkpoint used by regeneration evaluation.','phase4_regeneration.yaml':'Compares the Phase 3 checkpoint with the damage-trained checkpoint. Run both training presets first.','phase5_ecology.yaml':'Runs two genome-conditioned organisms with light, water, energy, and growth costs. Run Genome lab training first.','ecology_experiments.yaml':'Runs the full ecology scenario matrix. Run Genome lab training first.'};function loadConfig(){const c=state.configs.find(c=>c.name===$('#configSelect').value);if(!c){$('#editor').value='';return}$('#editor').value=c.content;$('#editor').dataset.config=c.name;$('#kindLabel').textContent=c.kind.toUpperCase();const smoke=c.name.startsWith('smoke_'),requested=(c.content.match(/^\s*device:\s*(auto|cpu|cuda|mps)\s*$/m)||[])[1]||'auto';$('#device').value=requested;renderSliders();syncDependencyCheckpoints();$('#warning').textContent=smoke?'Smoke presets only validate that the pipeline runs; they use tiny, untrained or barely trained models and are not meaningful scientific results.':presetNotes[c.name]||''}
 function liveLabel(l){return [l.phase,l.genome,l.damage,l.severity!=null?`severity ${l.severity}`:null,l.step!=null&&l.total_steps!=null?`step ${l.step}/${l.total_steps}`:null,l.steps_per_second!=null?`${Number(l.steps_per_second).toFixed(1)} steps/s`:null,l.iteration!=null?`iteration ${l.iteration}`:null].filter(Boolean).join(' · ')}
 function labPost(path,value={}){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,...value})})}
@@ -1044,16 +1105,20 @@ function renderWithLogScroll(container,html){
     }
     container.scrollTop=top;container.scrollLeft=left;
 }
-function jobs(){const running=state.jobs.filter(j=>j.status==='running');$('#jobCount').textContent=`${running.length} active jobs`;return state.jobs.map(j=>`<article class="job"><div class="job-row"><div><b>${esc(j.run_name)}</b><div class="status ${j.status}">${esc(j.status)}</div></div>${j.status==='running'?`<button class="btn danger" onclick="stopJob('${esc(j.id)}')">Stop</button>`:''}</div>${j.live?`<figure class="live-view"><img src="${esc(j.live.url)}" alt="Live organism state for ${esc(j.run_name)}"><figcaption>${esc(liveLabel(j.live))}</figcaption></figure>`:''}<pre data-log-key="job:${esc(j.id)}">${esc(j.log||'Waiting for output…')}</pre></article>`).join('')}
 function runs(){const q=$('#search').value.toLowerCase();const items=state.runs.filter(r=>matchesArea(r)&&r.name.toLowerCase().includes(q));$('#runCount').textContent=`${state.runs.length} saved runs`;renderWithLogScroll($('#runList'),jobs()+(items.length?items.map(r=>`<article class="run-card ${selectedRun===r.name?'active':''}" data-run="${esc(r.name)}"><h3>${esc(r.name)}</h3><small>${esc(r.kind)} · ${r.media.length} visuals · ${r.lab_ready?'lab ready':'artifacts only'}</small></article>`).join(''):'<div class="empty">No matching runs.</div>'));document.querySelectorAll('[data-run]').forEach(el=>el.onclick=()=>showRun(el.dataset.run))}
 function showRun(name){selectedRun=name;const r=state.runs.find(r=>r.name===name);if(!r)return;$('#resultTitle').textContent=r.name;$('#resultKind').textContent=r.kind.toUpperCase();$('#resultDate').textContent=new Date(r.updated).toLocaleString();let html=r.lab_ready?`<div class="actions" style="margin-bottom:14px"><button class="btn primary" data-open-lab="${esc(r.name)}">Open in View Checkpoints</button></div>`:'';html+=r.media.length?`<div class="gallery">${r.media.map(m=>`<figure class="media"><img src="${m.url}" alt="${esc(m.name)} visualization"><figcaption>${esc(m.name)}</figcaption></figure>`).join('')}</div>`:'<div class="empty">This run has no saved images yet.</div>';for(const metric of r.metrics){html+=`<div class="table-wrap"><table><caption style="padding:10px;text-align:left">${esc(metric.name)}</caption><thead><tr>${metric.columns.map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${metric.rows.map(row=>`<tr>${metric.columns.map(c=>`<td>${esc(row[c])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`}if(r.logs)html+=`<h3>Training log</h3><pre data-log-key="run:${esc(r.name)}">${esc(r.logs)}</pre>`;renderWithLogScroll($('#resultBody'),html);document.querySelectorAll('[data-open-lab]').forEach(button=>button.onclick=()=>openLab(button.dataset.openLab));runs()}
 async function refresh(){try{const first=!state.configs.length;state=await api('/api/state');await loadTreeSchema();if(!$('#archiveFamily').dataset.ready){$('#archiveFamily').dataset.ready='1';$('#archiveFamily').innerHTML='<option value="">All families</option>'+treeSchema.families.map(name=>`<option value="${esc(name)}">${esc(prettyName(name))}</option>`).join('');refreshVariantArchive()}const h=state.hardware||{};$('#deviceStatus').textContent=h.cuda_available?`GPU · ${h.cuda_name}`:h.mps_available?'GPU · Apple Metal':`Auto · ${h.auto_device||'CPU'}`;for(const select of [$('#device'),$('#labDevice'),$('#evaluationDevice')]){select.querySelector('option[value="cuda"]').disabled=!h.cuda_available;select.querySelector('option[value="mps"]').disabled=!h.mps_available;}if(selectedRun&&!state.runs.some(r=>r.name===selectedRun))selectedRun=null;configs(first);syncDependencyCheckpoints();syncEvaluationRuns();syncLabRuns();runs();if(state.lab&&(!lab||state.lab.run!==lab.run||state.lab.frame_version!==lab.frame_version))await setLab(state.lab);if(selectedRun)showRun(selectedRun)}catch(e){toast(e.message,true)}}
-async function launch(){try{const job=await api('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,config:$('#configSelect').value,content:$('#editor').value,run_name:$('#runName').value,device:$('#device').value,live_preview:$('#livePreview').checked})});toast(`Started ${job.run_name}`);$('#runName').value='';await refresh()}catch(e){toast(e.message,true)}}async function stopJob(id){try{await api('/api/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,job:id})});toast('Stop requested');await refresh()}catch(e){toast(e.message,true)}}
+async function launch(){try{const hidden=$('#hiddenLayers');if(hidden&&!hidden.reportValidity())return;const job=await api('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,config:$('#configSelect').value,content:$('#editor').value,run_name:$('#runName').value,device:$('#device').value,live_preview:$('#livePreview').checked})});toast(`Started ${job.run_name}`);$('#runName').value='';await refresh()}catch(e){toast(e.message,true)}}async function stopJob(id){try{await api('/api/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,job:id})});toast('Stop requested');await refresh()}catch(e){toast(e.message,true)}}
 $('#labRun').onchange=syncLabCheckpoints;$('#treeApply').onclick=commitTreeDraft;$('#treeRandomize').onclick=randomizeTree;$('#treeMutate').onclick=mutateTree;$('#treeMutation').oninput=()=>$('#treeMutationValue').value=Number($('#treeMutation').value).toFixed(2);$('#treeStoreA').onclick=()=>storeTreeSlot('A');$('#treeStoreB').onclick=()=>storeTreeSlot('B');$('#treeInterpolation').oninput=()=>$('#treeInterpolationValue').value=Number($('#treeInterpolation').value).toFixed(2);$('#treeInterpolate').onclick=interpolateTree;$('#treeDownload').onclick=downloadTreeGenome;$('#treeLoad').onclick=()=>$('#treeJsonFile').click();$('#treeJsonFile').onchange=event=>{if(event.target.files[0])loadTreeGenomeFile(event.target.files[0])};$('#treeValidate').onclick=validateTreeCandidate;$('#treeArchive').onclick=saveVariant;$('#environmentApply').onclick=applyEnvironment;$('#environmentReset').onclick=()=>setEnvironmentDraft(lab?.environment||treeSchema?.default_environment,false);$('#archiveRefresh').onclick=refreshVariantArchive;for(const id of ['#archiveFamily','#archiveMethod','#archiveModelKind'])$(id).onchange=refreshVariantArchive;$('#archiveMinScore').onchange=refreshVariantArchive;loadTreeSchema().then(()=>{$('#archiveFamily').innerHTML='<option value="">All families</option>'+treeSchema.families.map(name=>`<option value="${esc(name)}">${esc(prettyName(name))}</option>`).join('');refreshVariantArchive()}).catch(error=>toast(error.message,true));
 document.querySelectorAll('.nav button[data-kind]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');kind=b.dataset.kind;configs(true);runs()});$('#labNav').onclick=()=>$('#designLab').scrollIntoView({behavior:'smooth',block:'start'});$('#configSelect').onchange=loadConfig;$('#dependencyCheckpoint').onchange=()=>setDependencyCheckpoint($('#dependencyCheckpoint').value);$('#familyCurriculum').onchange=()=>{setYamlText('family_curriculum',$('#familyCurriculum').value);syncFamilyCurriculum()};$('#editor').onchange=()=>{renderSliders();syncDependencyCheckpoints()};$('#evaluationRun').onchange=syncEvaluationCheckpoints;$('#evaluationRunButton').onclick=evaluateCheckpoint;$('#reset').onclick=loadConfig;$('#launch').onclick=launch;$('#refresh').onclick=refresh;$('#search').oninput=runs;$('#labLoad').onclick=()=>openLab();$('#labDeleteCheckpoint').onclick=deleteLabCheckpoint;$('#labPlay').onclick=toggleLab;$('#labStep').onclick=()=>labControl('advance',{steps:1});$('#labReset').onclick=()=>labControl('reset');$('#labClear').onclick=()=>labControl('clear');$('#labGenome').onchange=()=>labControl('genome',{genome:Number($('#labGenome').value)});$('#labView').onchange=()=>{syncLabLayer(true);drawLab()};$('#labLayer').oninput=()=>{$('#labLayerValue').value=$('#labLayer').value;drawLab()};$('#labSpeed').oninput=()=>{syncLabSpeed();if(labPlaying){const generation=++labPlayGeneration;clearTimeout(labLoopTimer);labLoopTimer=setTimeout(()=>labLoop(generation),labBusy?10:0)}};$('#labRadius').oninput=()=>$('#labRadiusValue').value=$('#labRadius').value;const labCanvas=$('#labCanvas');labCanvas.onpointerdown=event=>{if(event.button!==0||!lab)return;labCanvas.setPointerCapture(event.pointerId);if(labVoxelMode()){labOrbiting=true;labLastX=event.clientX;labLastY=event.clientY;return}labEditing=true;labMoved=false};labCanvas.onpointermove=event=>{if(labOrbiting){labYaw+=(event.clientX-labLastX)*.012;labPitch=Math.max(-1.45,Math.min(1.45,labPitch+(event.clientY-labLastY)*.012));labLastX=event.clientX;labLastY=event.clientY;renderVoxels();return}if(labEditing&&$('#labTool').value==='erase'){labMoved=true;clearTimeout(labClickTimer);editLab(labEditPayload(event),false,false)}};labCanvas.onpointerup=event=>{if(labOrbiting){labOrbiting=false;return}if(!labEditing)return;labEditing=false;const payload=labEditPayload(event);if(labMoved){labAction('erase',payload,true);return}if($('#labTool').value==='seed')editLab(payload);else{clearTimeout(labClickTimer);labClickTimer=setTimeout(()=>editLab(payload),450)}};labCanvas.onpointercancel=()=>{labEditing=false;labOrbiting=false};labCanvas.ondblclick=event=>{if(labVoxelMode())return;event.preventDefault();clearTimeout(labClickTimer);editLab(labEditPayload(event),true)};labCanvas.onwheel=event=>{if(!labVoxelMode())return;event.preventDefault();labZoom=Math.max(.5,Math.min(3,labZoom*Math.exp(-event.deltaY*.001)));renderVoxels()};labCanvas.oncontextmenu=event=>event.preventDefault();window.addEventListener('resize',()=>{if(labVoxelMode())renderVoxels()});refresh();setInterval(()=>{if(state.jobs.some(j=>j.status==='running'))refresh()},2000);
 document.querySelectorAll('.nav button[data-page]').forEach(button=>button.onclick=()=>showPage(button.dataset.page));$('#openTreeGenomeWindow').onclick=()=>openUtilityWindow('genome');$('#openEnvironmentWindow').onclick=()=>openUtilityWindow('environment-lab');labCanvas.addEventListener('pointermove',()=>{if(labOrbiting)renderTargetVoxels()});labCanvas.addEventListener('wheel',renderTargetVoxels);window.addEventListener('resize',renderTargetVoxels);setInterval(()=>{if((lab||state.lab)&&!state.jobs.some(job=>job.status==='running'))refresh()},2000);
 
-function jobs(){const running=state.jobs.filter(job=>job.status==='running'),runNames=new Set(state.runs.map(run=>run.name));$('#jobCount').textContent=`${running.length} active jobs`;return state.jobs.map(job=>{const canShowStats=runNames.has(job.run_name),actions=`${canShowStats?`<button class="btn" data-job-stats="${esc(job.run_name)}">Stats</button>`:''}${job.status==='running'?`<button class="btn danger" data-stop-job="${esc(job.id)}">Stop</button>`:`<button class="btn danger" data-delete-job="${esc(job.id)}">Delete job</button>`}`;return`<article class="job"><div class="job-row"><div><b>${esc(job.run_name)}</b><div class="status ${job.status}">${esc(job.status)}</div></div><div class="actions">${actions}</div></div>${job.live?`<figure class="live-view"><img src="${esc(job.live.url)}" alt="Live organism state for ${esc(job.run_name)}"><figcaption>${esc(liveLabel(job.live))}</figcaption></figure>`:''}<pre data-log-key="job:${esc(job.id)}">${esc(job.log||'Waiting for output…')}</pre></article>`}).join('')}
+function trainingStats(progress){
+  if(!progress)return '';
+  const rate=progress.iterations_per_second;
+  return `<div class="lab-stats" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="lab-stat"><b>${Number(progress.iteration).toLocaleString()}</b><small>iteration</small></div><div class="lab-stat" title="Completed training iterations per second over the last ~30 seconds, including validation pauses. Measuring starts when the dashboard connects."><b>${rate==null?'Measuring…':Number(rate).toFixed(2)}</b><small>iterations/second</small></div><div class="lab-stat" title="Mean loss across all completed training iterations logged by this job."><b>${Number(progress.average_loss).toFixed(4)}</b><small>average loss</small></div></div>`;
+}
+function jobs(){const running=state.jobs.filter(job=>job.status==='running'),runNames=new Set(state.runs.map(run=>run.name));$('#jobCount').textContent=`${running.length} active jobs`;return state.jobs.map(job=>{const canShowStats=runNames.has(job.run_name),actions=`${canShowStats?`<button class="btn" data-job-stats="${esc(job.run_name)}">Stats</button>`:''}${job.status==='running'?`<button class="btn danger" data-stop-job="${esc(job.id)}">Stop</button>`:`<button class="btn danger" data-delete-job="${esc(job.id)}">Delete job</button>`}`;return`<article class="job"><div class="job-row"><div><b>${esc(job.run_name)}</b><div class="status ${job.status}">${esc(job.status)}</div></div><div class="actions">${actions}</div></div>${trainingStats(job.progress)}${job.live?`<figure class="live-view"><img src="${esc(job.live.url)}" alt="Live organism state for ${esc(job.run_name)}"><figcaption>${esc(liveLabel(job.live))}</figcaption></figure>`:''}<pre data-log-key="job:${esc(job.id)}">${esc(job.log||'Waiting for output…')}</pre></article>`}).join('')}
 function bindRunControls(){document.querySelectorAll('[data-run-card]').forEach(card=>card.onclick=()=>showRun(card.dataset.runCard));document.querySelectorAll('[data-run-stats],[data-job-stats]').forEach(button=>button.onclick=event=>{event.stopPropagation();showRun(button.dataset.runStats||button.dataset.jobStats)});document.querySelectorAll('[data-run-delete]').forEach(button=>button.onclick=event=>{event.stopPropagation();deleteRun(button.dataset.runDelete)});document.querySelectorAll('[data-stop-job]').forEach(button=>button.onclick=()=>stopJob(button.dataset.stopJob));document.querySelectorAll('[data-delete-job]').forEach(button=>button.onclick=()=>deleteJob(button.dataset.deleteJob))}
 function runs(){const query=$('#search').value.toLowerCase(),items=state.runs.filter(run=>matchesArea(run)&&run.name.toLowerCase().includes(query));$('#runCount').textContent=`${state.runs.length} saved runs`;renderWithLogScroll($('#runList'),jobs()+(items.length?items.map(run=>`<article class="run-card ${selectedRun===run.name?'active':''}" data-run-card="${esc(run.name)}"><h3>${esc(run.name)}</h3><small>${esc(run.kind)} · ${run.media.length} visuals · ${run.lab_ready?'lab ready':'artifacts only'}</small><div class="actions" style="margin-top:12px"><button class="btn" data-run-stats="${esc(run.name)}">Stats</button><button class="btn danger" data-run-delete="${esc(run.name)}">Delete run</button></div></article>`).join(''):'<div class="empty">No matching runs.</div>'));bindRunControls()}
 async function deleteRun(name){if(!confirm(`Permanently delete run "${name}" and all of its checkpoints, metrics, and images?`))return;try{await api('/api/run/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,run:name})});if(selectedRun===name){selectedRun=null;$('#resultTitle').textContent='Select a run';$('#resultKind').textContent='RESULTS';$('#resultDate').textContent='—';$('#resultBody').innerHTML='<div class="empty">Run deleted.</div>'}toast(`Deleted ${name}`);await refresh()}catch(error){toast(error.message,true)}}

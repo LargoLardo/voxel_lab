@@ -116,6 +116,7 @@ def test_counterfactual_targets_are_generated_once_and_reused(monkeypatch, span,
     def counted(*args):
         calls.append(args)
         return make_tree_target(*args)
+    family._cached_tree_target.cache_clear()
     monkeypatch.setattr(family, "make_tree_target", counted)
     data = sample_counterfactual_family_data(4, 16, 42, genome_span=span, condition_ids=[0, 8, 16, 24])
     assert len(calls) == expected_calls

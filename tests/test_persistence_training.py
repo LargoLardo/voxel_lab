@@ -113,6 +113,22 @@ def test_lethal_damage_keeps_the_original_living_sample():
     assert torch.equal(kept, original)
 
 
+def test_lethal_damage_is_rejected_for_both_members_of_a_counterfactual_pair():
+    from morphovoxel.damage import damage_3d
+
+    original = torch.zeros(4, 3, 5, 5, 5)
+    original[:, :, 0, 2, 2] = 1
+    original[1:, :, 4, 2, 2] = 1
+    damaged, _ = damage_3d(original, .4, "top")
+    assert not damaged[0].any() and damaged[1:].any()
+    kept = _keep_viable_damage(original, damaged, paired=True)
+    torch.testing.assert_close(kept[:2], original[:2])
+    torch.testing.assert_close(kept[2:], damaged[2:])
+    torch.testing.assert_close(_keep_viable_damage(original, damaged)[1:], damaged[1:])
+    with pytest.raises(ValueError, match="even-sized pairs"):
+        _keep_viable_damage(original[:1], damaged[:1], paired=True)
+
+
 class _IdentityCA(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -145,9 +161,10 @@ def test_validation_rolls_every_genome_to_requested_horizon():
 
 
 def test_conditional_training_updates_best_checkpoint_on_tied_scores(tmp_path, monkeypatch):
+    score = .75
     monkeypatch.setattr(
         "morphovoxel.training.trainer._validate_persistence",
-        lambda *args, **kwargs: (0.0, {name: 0.0 for name in MORPHOLOGIES}),
+        lambda *args, **kwargs: (score, {name: score for name in MORPHOLOGIES}),
     )
     run = train(
         {
@@ -180,3 +197,22 @@ def test_conditional_training_updates_best_checkpoint_on_tied_scores(tmp_path, m
     assert set(checkpoint["validation"]["per_genome"]) == set(MORPHOLOGIES)
     assert len(checkpoint["pool"]["states"]) >= len(MORPHOLOGIES)
     assert (run / "metrics" / "persistence_validation.csv").is_file()
+
+    # Resuming an older file must compare against the actual incumbent best.
+    before = (run / "checkpoints/best.pt").read_bytes()
+    checkpoint["validation"]["best_worst_genome_persistence_score"] = .1
+    older = run / "checkpoints/older.pt"
+    torch.save(checkpoint, older)
+    score = .25
+    resumed_config = {**checkpoint["config"], "iterations": 1, "resume": str(older)}
+    train(resumed_config, dimensions=3, conditional=True)
+    assert (run / "checkpoints/best.pt").read_bytes() == before
+    latest = torch.load(run / "checkpoints/latest.pt", map_location="cpu", weights_only=False)
+    assert latest["validation"]["best_worst_genome_persistence_score"] == .75
+    assert latest["validation"]["worst_genome_persistence_score"] == .25
+
+    # Changing the validation horizon starts a new, incomparable ranking.
+    train({**resumed_config, "validation_steps": 5}, dimensions=3, conditional=True)
+    best = torch.load(run / "checkpoints/best.pt", map_location="cpu", weights_only=False)
+    assert best["validation"]["validation_steps"] == 5
+    assert best["validation"]["best_worst_genome_persistence_score"] == .25

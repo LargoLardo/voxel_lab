@@ -3,13 +3,33 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from functools import lru_cache
 
 import numpy as np
 import torch
 
-from ..environment import EnvironmentSpec, environment_context_batch
+from ..environment import EnvironmentSpec, make_environment_context
 from ..genomes import FAMILY_GENE_NAMES, TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome, tree_genome_tensor
 from ..targets import make_tree_target
+from .losses import _distance_field
+
+
+@lru_cache(maxsize=32)
+@torch.inference_mode(False)
+def _cached_tree_target(genome: TreeGenome, size: int, environment: EnvironmentSpec):
+    # Private CPU cache: packing copies these arrays before callers can edit them.
+    occupancy, materials = make_tree_target(genome, size, environment)
+    # Neutral examples recur. New varied targets are cheaper to prepare together
+    # on the training device in _pack_family_data, then retain in the state pool.
+    distance = (_distance_field(torch.from_numpy(occupancy)[None])[0]
+                if not any(genome.genes) and environment == EnvironmentSpec() else None)
+    return occupancy, materials, distance
+
+
+@lru_cache(maxsize=8)
+@torch.inference_mode(False)
+def _cached_environment(environment: EnvironmentSpec, size: int) -> torch.Tensor:
+    return make_environment_context(environment, size)
 
 
 @dataclass
@@ -25,6 +45,7 @@ class FamilyData:
     creation_methods: list[str]
     condition_ids: torch.Tensor
     pair_ids: torch.Tensor
+    target_distances: torch.Tensor
 
 
 def _pack_family_data(
@@ -36,42 +57,46 @@ def _pack_family_data(
     *,
     condition_ids: Sequence[int] | None = None,
     pair_ids: Sequence[int] | None = None,
-    targets: Sequence[tuple[np.ndarray, np.ndarray]] | None = None,
+    targets: Sequence[tuple[np.ndarray, np.ndarray, torch.Tensor | None]] | None = None,
     minimum_branch_voxels: int = 1,
     minimum_leaf_voxels: int = 1,
 ) -> FamilyData:
     if targets is None:
-        targets = [make_tree_target(genome, size, environment) for genome, environment in zip(genomes, environments)]
+        targets = [_cached_tree_target(genome, size, environment) for genome, environment in zip(genomes, environments)]
     if len(targets) != len(genomes):
         raise ValueError("each genome must have one target")
-    empty = [index for index, (occupancy, _) in enumerate(targets) if not np.asarray(occupancy).any()]
+    empty = [index for index, (occupancy, _, _) in enumerate(targets) if not np.asarray(occupancy).any()]
     if empty:
         raise RuntimeError(f"tree target invariant violated: occupancy is empty for sample indices {', '.join(map(str, empty))}")
     for material_index, name, minimum in (
         (2, "branch", minimum_branch_voxels), (3, "leaf", minimum_leaf_voxels),
     ):
-        counts = [int(np.count_nonzero(materials == material_index)) for _, materials in targets]
+        counts = [int(np.count_nonzero(materials == material_index)) for _, materials, _ in targets]
         undersized = [index for index, count in enumerate(counts) if 0 < count < minimum]
         if undersized:
             raise RuntimeError(
                 f"tree target invariant violated: positive {name} masks need at least {minimum} voxels "
                 f"for sample indices {', '.join(map(str, undersized))}"
             )
-    occupancy, materials = zip(*targets)
+    occupancy, materials, distances = zip(*targets)
+    target_occupancy = torch.as_tensor(np.stack(occupancy), device=device)
+    target_distances = (torch.stack(distances).to(device) if all(value is not None for value in distances)
+                        else _distance_field(target_occupancy))
     count = len(genomes)
     return FamilyData(
         genomes=genomes,
         environment_specs=environments,
         model_genomes=tree_genome_tensor(genomes, device=device),
-        target_occupancy=torch.as_tensor(np.stack(occupancy), device=device),
+        target_occupancy=target_occupancy,
         target_materials=torch.as_tensor(np.stack(materials), dtype=torch.long, device=device),
-        environments=environment_context_batch(environments, size, device=device),
+        environments=torch.stack([_cached_environment(environment, size) for environment in environments]).to(device),
         # Metadata contains exact seeds in float64; Metal cannot store this dtype.
         environment_vectors=torch.stack([environment.vector() for environment in environments]),
         style_seeds=torch.tensor([genome.style_seed for genome in genomes], dtype=torch.long, device=device),
         creation_methods=methods,
         condition_ids=torch.tensor(condition_ids if condition_ids is not None else [-1] * count, dtype=torch.long, device=device),
         pair_ids=torch.tensor(pair_ids if pair_ids is not None else range(count), dtype=torch.long, device=device),
+        target_distances=target_distances,
     )
 
 
@@ -270,7 +295,7 @@ def sample_counterfactual_family_data(
     methods: list[str] = []
     item_conditions: list[int] = []
     pair_ids: list[int] = []
-    targets: list[tuple[np.ndarray, np.ndarray]] = []
+    targets: list[tuple[np.ndarray, np.ndarray, torch.Tensor | None]] = []
     locked = {spec.name for spec in TREE_GENE_SPECS if spec.name not in names}
     for pair_index, condition in enumerate(chosen):
         family = TREE_FAMILIES[condition // len(names)]
@@ -284,11 +309,11 @@ def sample_counterfactual_family_data(
             low = base if neutral else base.with_values({gene_name: -genome_span})
             high = base if neutral else base.with_values({gene_name: genome_span})
             environment = EnvironmentSpec.random(int(rng.integers(0, 2**31)), span=environment_span) if environment_span else EnvironmentSpec()
-            low_target = make_tree_target(low, size, environment)
-            pair_targets = (low_target, low_target if neutral else make_tree_target(high, size, environment))
+            low_target = _cached_tree_target(low, size, environment)
+            pair_targets = (low_target, low_target if neutral else _cached_tree_target(high, size, environment))
             counts = [
                 (int(np.count_nonzero(materials == 2)), int(np.count_nonzero(materials == 3)))
-                for _, materials in pair_targets
+                for _, materials, _ in pair_targets
             ]
             if all(
                 (branches == 0 or branches >= minimum_branch_voxels)

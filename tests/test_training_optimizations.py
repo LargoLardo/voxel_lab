@@ -27,6 +27,83 @@ def test_default_basic_styles_produce_distinct_trees():
 
 
 @pytest.mark.parametrize("device", DEVICES)
+def test_cached_family_targets_are_reused_without_aliasing_or_changing_gradients(device):
+    from morphovoxel.environment import EnvironmentSpec
+    from morphovoxel.training import family
+    from morphovoxel.training.losses import _distance_field
+
+    family._cached_tree_target.cache_clear()
+    family._cached_environment.cache_clear()
+    options = dict(genome_span=0, style_seeds=[0], condition_ids=[0, 8, 16, 24], device=device)
+    with torch.inference_mode():
+        first = family.sample_counterfactual_family_data(4, 12, 17, **options)
+    second = family.sample_counterfactual_family_data(4, 12, 18, **options)
+    assert family._cached_tree_target.cache_info().misses == 4
+    assert family._cached_tree_target.cache_info().hits == 4
+    assert family._cached_environment.cache_info().misses == 1
+    with torch.inference_mode():
+        first.target_occupancy.zero_()
+        first.target_materials.zero_()
+        first.target_distances.zero_()
+        first.environments.zero_()
+    third = family.sample_counterfactual_family_data(4, 12, 19, **options)
+    for name in ("target_occupancy", "target_materials", "target_distances", "environments"):
+        torch.testing.assert_close(getattr(second, name), getattr(third, name))
+
+    layout = StateLayout(4, 1)
+    state = torch.randn(8, layout.channels, 12, 12, 12, device=device, requires_grad=True)
+    original = state.detach().clone().requires_grad_()
+    prepared = prepare_morphology_targets(second.target_occupancy, second.target_materials, distance=second.target_distances)
+    loss, _ = morphology_loss(state, second.target_occupancy, second.target_materials, layout, prepared_targets=prepared)
+    reference, _ = morphology_loss(original, second.target_occupancy, second.target_materials, layout)
+    torch.testing.assert_close(loss, reference)
+    loss.backward()
+    reference.backward()
+    torch.testing.assert_close(state.grad, original.grad)
+
+    # Every target-defining input participates in the key, including style and size.
+    base = TreeGenome()
+    for genome, size, environment in (
+        (base.with_values({"height": .5}), 12, EnvironmentSpec()),
+        (TreeGenome(style_seed=970806), 12, EnvironmentSpec()),
+        (base, 16, EnvironmentSpec()),
+        (base, 12, EnvironmentSpec(wind_strength=1, wind_direction_x=1)),
+    ):
+        cached, material, distance = family._cached_tree_target(genome, size, environment)
+        wanted, wanted_material = make_tree_target(genome, size, environment)
+        torch.testing.assert_close(torch.from_numpy(cached), torch.from_numpy(wanted))
+        torch.testing.assert_close(torch.from_numpy(material), torch.from_numpy(wanted_material))
+        if distance is not None:
+            torch.testing.assert_close(distance, _distance_field(torch.from_numpy(wanted)[None])[0])
+    assert family._cached_tree_target.cache_info().misses == 8
+    varied = family.sample_counterfactual_family_data(2, 12, 20, genome_span=.6, environment_span=.5, device=device)
+    torch.testing.assert_close(varied.target_distances, _distance_field(varied.target_occupancy))
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_disabled_damage_preserves_reseeding_without_ranking_pair_errors(device, monkeypatch):
+    from morphovoxel.training.trainer import _paired_pool_actions, _pool_actions
+
+    state = torch.ones(8, 1, 3, 3, 3, device=device)
+    target = torch.ones(8, 3, 3, 3, device=device)
+    state[2] = 0  # A dead entry must still force both members of its pair to reset.
+    ages = torch.tensor([30, 30, 10, 10, 80, 80, 20, 20], device=device)
+    expected, damage = _paired_pool_actions(state, target, ages, 1, 1, 15)
+    assert len(damage) > 0
+    regular, _ = _pool_actions(state, target, ages, 1, 1, 15)
+    actual_regular, empty = _pool_actions(state, target, ages, 1, 0, 15)
+    torch.testing.assert_close(actual_regular, regular)
+    assert len(empty) == 0
+
+    def unexpected_error_ranking(*args, **kwargs):
+        pytest.fail("disabled paired damage must not compute error rankings")
+    monkeypatch.setattr(torch, "nan_to_num", unexpected_error_ranking)
+    actual, empty = _paired_pool_actions(state, target, ages, 1, 0, 15)
+    torch.testing.assert_close(actual, expected)
+    assert actual.tolist() == [2, 3, 4, 5] and len(empty) == 0
+
+
+@pytest.mark.parametrize("device", DEVICES)
 def test_prepared_rollout_preserves_gradients_and_refreshes_after_updates(device, monkeypatch):
     seed_everything(123, deterministic=device != "mps")
     model = TreeFamilyNCA3D(5, 8, context_channels=2).to(device)

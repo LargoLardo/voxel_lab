@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import time
-from pathlib import Path
 
 import imageio.v2 as imageio
 import numpy as np
@@ -77,6 +76,7 @@ def main() -> None:
                 0,
                 float(config.get("fire_rate", 0.5)),
                 context_channels,
+                hidden_layers=config.get("hidden_layers"),
             ).to(device).eval()
             payload = load_checkpoint(checkpoint, specialist, map_location=device)
             if payload["metadata"]["model_kind"] not in {"specialist", "tree_specialist"}:
@@ -99,6 +99,7 @@ def main() -> None:
         shared_model = model_type(
             layout.channels, int(config.get("model_width", 32)), genome_size,
             float(config.get("fire_rate", 0.5)), context_channels, *extra,
+            hidden_layers=config.get("hidden_layers"),
         ).to(device).eval()
         if config.get("checkpoint"):
             expected_kind = str(config.get(

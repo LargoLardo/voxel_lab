@@ -29,7 +29,10 @@ def main() -> None:
     trained_size = int(config.get("world_size", 32))
     base_target, _ = make_target_3d("branching", trained_size, int(config.get("seed", 0)))
     layout = StateLayout(int(config.get("materials", 4)), int(config.get("hidden_channels", 8)))
-    model = NeuralCA3D(layout.channels, int(config.get("model_width", 64)), len(MORPHOLOGIES), float(config.get("fire_rate", 0.5)))
+    model = NeuralCA3D(
+        layout.channels, int(config.get("model_width", 64)), len(MORPHOLOGIES), float(config.get("fire_rate", 0.5)),
+        hidden_layers=config.get("hidden_layers"),
+    )
     load_checkpoint(args.checkpoint, model)
     rows = []
     for size in config.get("scaling_sizes", [40, 48, 64]):
@@ -45,4 +48,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

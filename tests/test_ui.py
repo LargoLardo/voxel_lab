@@ -20,7 +20,7 @@ from morphovoxel.genomes import TREE_GENOME_VERSION, TreeGenome
 from morphovoxel.state import StateLayout
 from morphovoxel.targets import make_tree_target
 from morphovoxel.targets.targets_3d import TREE_TARGET_VERSION
-from morphovoxel.ui import CONFIGS, HTML, DashboardHandler, _RecoveredProcess, _inside, _launch, build_state, create_server
+from morphovoxel.ui import CONFIGS, HTML, DashboardHandler, _RecoveredProcess, _inside, _job_view, _launch, build_state, create_server
 from morphovoxel.utils import steps_per_second, write_live_preview
 from morphovoxel.validation import ValidationCase, ValidationCriteria, ValidationReport, ValidationTrial
 
@@ -206,6 +206,97 @@ assert.equal(elements['#labDeleteCheckpoint'].disabled, true);
     subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
 
 
+def test_hidden_layer_control_roundtrips_yaml_and_rejects_invalid_widths():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to check the dashboard controls")
+    functions = [
+        next(line for line in HTML.splitlines() if line.startswith(f"function {name}("))
+        for name in ("yamlNumber", "setYamlNumber")
+    ]
+    functions.extend(re.search(rf"function {name}\(.*?\n\}}", HTML, re.DOTALL).group()
+                     for name in ("hiddenLayerText", "setHiddenLayers"))
+    functions.insert(0, next(line for line in HTML.splitlines() if line.startswith("const hiddenLayersPattern=")))
+    functions.append(next(line for line in HTML.splitlines() if line.startswith("async function launch()")))
+    script = """
+const assert=require('node:assert/strict');
+const editor={value:'model_width: 64\\niterations: 10\\n'};
+const elements={
+  '#hiddenLayers':{value:'32',reportValidity:()=>true}, '#runName':{value:''},
+  '#configSelect':{value:'tree_family.yaml'}, '#device':{value:'cpu'}, '#livePreview':{checked:true}
+};
+const $=selector=>selector==='#editor'?editor:elements[selector];
+const TOKEN='test',toast=()=>{},refresh=async()=>{};
+let posted;
+const api=async(path,options)=>{posted=JSON.parse(options.body);return {run_name:'test'}};
+""" + "\n".join(functions) + r"""
+assert.equal(hiddenLayerText(),'64');
+setHiddenLayers('32, 32');
+assert.equal(hiddenLayerText(),'32, 32');
+assert.match(editor.value,/hidden_layers: \[32, 32\]/);
+assert.match(editor.value,/model_width: 32/);
+assert.match(editor.value,/iterations: 10/);
+editor.value='hidden_layers: # custom network\n  - 48\n\n  # second layer\n  - 24\niterations: 10\n';
+assert.equal(hiddenLayerText(),'48, 24');
+setHiddenLayers('16, 8, 4');
+assert.equal(hiddenLayerText(),'16, 8, 4');
+assert.doesNotMatch(editor.value,/48|24/);
+assert.match(editor.value,/iterations: 10/);
+const saved=editor.value;
+for(const value of ['', '32,', '0', '-1, 32', '2.5', 'true', '32 32']){
+  assert.throws(()=>setHiddenLayers(value),/positive neuron counts/);
+  assert.equal(editor.value,saved);
+}
+// Unsupported or invalid YAML stays in the editor for the server to parse.
+for(const value of ['hidden_layers: -32', 'hidden_layers: []', 'hidden_layers: *layers', 'base:\n  model_width: 64']){
+  editor.value=value+'\n';
+  assert.equal(hiddenLayerText(),null);
+}
+editor.value='hidden_layers: [\n  48,\n  24\n  ]\niterations: 10\n';
+assert.equal(hiddenLayerText(),'48, 24');
+setHiddenLayers('32, 32');
+assert.equal(editor.value,'hidden_layers: [32, 32]\niterations: 10\n');
+(async()=>{
+  // Launch must not rewrite advanced YAML from a stale quick-control value.
+  for(const content of ['hidden_layers: -32\n', 'hidden_layers: [48, 24]\n', 'model_width: 64\n']){
+    editor.value=content;
+    await launch();
+    assert.equal(posted.content,content);
+    assert.equal(editor.value,content);
+  }
+  elements['#hiddenLayers'].reportValidity=()=>false;
+  posted=null;
+  await launch();
+  assert.equal(posted,null);
+})().catch(error=>{console.error(error);process.exitCode=1});
+"""
+    subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("preset,section", [("full_experiment.yaml", "overrides"), ("ecology_experiments.yaml", "base")])
+def test_launch_preserves_and_validates_nested_model_settings(tmp_path, monkeypatch, preset, section):
+    from morphovoxel.config import load_config
+
+    class Process:
+        pid = 1
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr("morphovoxel.ui.subprocess.Popen", lambda *args, **kwargs: Process())
+    server = create_server(tmp_path, port=0)
+    try:
+        payload = {"config": preset, "device": "cpu", "live_preview": False}
+        job = _launch(server, {**payload, "content": f"{section}:\n  hidden_layers: [32, 32]\n  learning_rate: 0.002\n"})
+        config = load_config(server.jobs[job["id"]]["config_path"])
+        assert config[section] == {"hidden_layers": [32, 32], "learning_rate": .002, "device": "cpu", "live_preview": False}
+        for content in (f"{section}: []\n", f"{section}:\n  hidden_layers: [-32]\n"):
+            with pytest.raises(ValueError, match="mapping|positive integers"):
+                _launch(server, {**payload, "content": content})
+    finally:
+        server.server_close()
+
+
 def test_phase_two_dashboard_keeps_curriculum_and_checkpoint_selection_in_yaml():
     node = shutil.which("node")
     if node is None:
@@ -258,6 +349,88 @@ def test_step_rate_uses_completed_updates(monkeypatch):
     monkeypatch.setattr("morphovoxel.utils.time.perf_counter", lambda: 12.0)
     assert steps_per_second(24, 10.0) == 12.0
     assert steps_per_second(0, 10.0) == 0.0
+
+
+def test_job_training_stats_work_without_previews_and_survive_log_tail_truncation(tmp_path, monkeypatch):
+    class Process:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+    log = tmp_path / "job.log"
+    process = Process()
+    job = {
+        "id": "job", "config": "tree_family.yaml", "run_name": "tree", "process": process,
+        "command": "train", "started": "2026-09-29T12:00:00+00:00", "log_path": log,
+    }
+    now = 100.0
+    monkeypatch.setattr("morphovoxel.ui.time.monotonic", lambda: now)
+    assert _job_view(job)["progress"] is None
+    # Resumed checkpoints start at a large step; count newly logged updates.
+    content = "INFO step=12001 loss=2.0\n" + "validation detail\n" * 100
+    log.write_text(content)
+    first = _job_view(job)
+    assert first["live"] is None and "loss=" not in first["log"]
+    assert first["progress"] == {
+        "iteration": 12001, "completed_iterations": 1, "average_loss": 2.0, "iterations_per_second": None,
+    }
+    now += 2
+    log.write_text(content + "INFO step=12002 loss=4.0\nINFO step=12003 loss=6.0\nINFO step=12004 loss=")
+    progress = _job_view(job)["progress"]
+    assert progress["completed_iterations"] == 3
+    assert progress["iterations_per_second"] == 1.0
+    assert progress["average_loss"] == 4.0
+    # Repeated polls do not duplicate losses, and validation contributes no updates.
+    now += 2
+    assert _job_view(job)["progress"]["iterations_per_second"] == .5
+    for offset in range(6, 40, 2):
+        now = 100 + offset
+        progress = _job_view(job)["progress"]
+    assert progress["iterations_per_second"] == 0
+    assert progress["average_loss"] == 4.0
+    # A new phase may restart its step counter; do not turn that into negative speed.
+    now += 2
+    with log.open("a") as stream:
+        stream.write("\nINFO step=1 loss=8.0\nINFO step=2 loss=nan\n")
+    assert _job_view(job)["progress"]["average_loss"] == 5.0
+    assert _job_view(job)["progress"]["iterations_per_second"] > 0
+    process.returncode = 0
+    finished = _job_view(job)["progress"]
+    now += 1000
+    assert _job_view(job)["progress"] == finished
+    # Dashboard recovery recomputes average loss and measures a fresh rate window.
+    process.returncode = None
+    recovered = _job_view({key: value for key, value in job.items() if not key.startswith("_")})
+    assert recovered["progress"]["average_loss"] == 5.0
+    assert recovered["progress"]["iterations_per_second"] is None
+
+
+def test_running_job_renders_training_stats_without_an_image():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to check the dashboard controls")
+    function = re.search(r"function trainingStats\(.*?\n\}", HTML, re.DOTALL).group()
+    render = next(line for line in HTML.splitlines() if line.startswith("function jobs()"))
+    script = """
+const assert=require('node:assert/strict');
+const count={}, $=()=>count, esc=String;
+const state={runs:[],jobs:[{id:'test',run_name:'tree',status:'running',live:null,log:'training',
+    progress:{iteration:12003,iterations_per_second:1.25,average_loss:3.123456}}]};
+""" + function + "\n" + render + r"""
+let html=jobs();
+assert.match(html,/1.25/);
+assert.match(html,/iterations\/second/);
+assert.match(html,/3.1235/);
+assert.match(html,/average loss/);
+assert.doesNotMatch(html,/<img/);
+assert.match(html,/data-stop-job/);
+state.jobs[0].progress.iterations_per_second=null;
+assert.match(jobs(),/Measuring…/);
+state.jobs[0].progress=null;
+assert.doesNotMatch(jobs(),/NaN|average loss/);
+"""
+    subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
 
 
 def test_response_ignores_a_browser_disconnect():

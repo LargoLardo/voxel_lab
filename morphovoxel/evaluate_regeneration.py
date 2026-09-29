@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import time
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -40,7 +39,10 @@ def main() -> None:
     rows, all_frames, comparison = [], [], None
     checkpoints = config.get("checkpoints", {"untrained_reference": None})
     for model_name, checkpoint in checkpoints.items():
-        model = NeuralCA3D(layout.channels, int(config.get("model_width", 32)), len(MORPHOLOGIES), float(config.get("fire_rate", 0.5))).to(device).eval()
+        model = NeuralCA3D(
+            layout.channels, int(config.get("model_width", 32)), len(MORPHOLOGIES), float(config.get("fire_rate", 0.5)),
+            hidden_layers=config.get("hidden_layers"),
+        ).to(device).eval()
         if checkpoint:
             load_checkpoint(checkpoint, model, map_location=device)
         if not (run / "metadata.json").exists():

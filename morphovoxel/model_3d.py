@@ -5,6 +5,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from .config import resolve_hidden_layers
 from .perception_3d import perceive_3d
 
 
@@ -18,6 +19,8 @@ class NeuralCA3D(nn.Module):
         genome_size: int = 0,
         fire_rate: float = 0.5,
         context_channels: int = 0,
+        *,
+        hidden_layers: list[int] | tuple[int, ...] | None = None,
     ):
         super().__init__()
         if not 0 < fire_rate <= 1:
@@ -25,9 +28,12 @@ class NeuralCA3D(nn.Module):
         if context_channels < 0:
             raise ValueError("context_channels must be non-negative")
         self.channels, self.genome_size, self.context_channels, self.fire_rate = channels, genome_size, context_channels, fire_rate
-        self.update = nn.Sequential(
-            nn.Conv3d(channels * 5 + genome_size + context_channels, hidden, 1), nn.ReLU(), nn.Conv3d(hidden, channels, 1)
-        )
+        self.hidden_layers = resolve_hidden_layers(hidden, hidden_layers)
+        widths = (channels * 5 + genome_size + context_channels, *self.hidden_layers)
+        layers = []
+        for incoming, outgoing in zip(widths, widths[1:]):
+            layers.extend((nn.Conv3d(incoming, outgoing, 1), nn.ReLU()))
+        self.update = nn.Sequential(*layers, nn.Conv3d(widths[-1], channels, 1))
         nn.init.normal_(self.update[-1].weight, std=1e-3)
         nn.init.zeros_(self.update[-1].bias)
 
@@ -76,6 +82,8 @@ class TreeFamilyNCA3D(nn.Module):
         fire_rate: float = 0.5,
         context_channels: int = 0,
         family_count: int = 4,
+        *,
+        hidden_layers: list[int] | tuple[int, ...] | None = None,
     ):
         super().__init__()
         if not 0 < fire_rate <= 1:
@@ -88,7 +96,13 @@ class TreeFamilyNCA3D(nn.Module):
         self.fire_rate = fire_rate
         self.family_count = family_count
         self.continuous_size = genome_size - family_count
-        self.shared = nn.Conv3d(channels * 5 + context_channels, hidden, 1)
+        self.hidden_layers = resolve_hidden_layers(hidden, hidden_layers)
+        self.shared = nn.Conv3d(channels * 5 + context_channels, self.hidden_layers[0], 1)
+        layers = []
+        for incoming, outgoing in zip(self.hidden_layers, self.hidden_layers[1:]):
+            layers.extend((nn.Conv3d(incoming, outgoing, 1), nn.ReLU()))
+        self.hidden_update = nn.Sequential(*layers)
+        hidden = self.hidden_layers[-1]
         self.film = nn.ModuleList(nn.Linear(self.continuous_size, hidden * 2) for _ in range(family_count))
         self.heads = nn.ModuleList(nn.Conv3d(hidden, channels, 1) for _ in range(family_count))
         for layer in self.film:
@@ -141,6 +155,7 @@ class TreeFamilyNCA3D(nn.Module):
         elif context is not None:
             raise ValueError("this model was created without environment context channels")
         hidden = F.relu(self.shared(features))
+        hidden = self.hidden_update(hidden)
         gamma, beta, head_weight, head_bias = self.prepare_genome(genome) if prepared_genome is None else prepared_genome
         modulated = F.relu(hidden * (1 + gamma[..., None, None, None]) + beta[..., None, None, None])
         delta = torch.bmm(head_weight, modulated.flatten(2)).reshape_as(state) + head_bias[..., None, None, None]

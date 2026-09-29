@@ -30,7 +30,10 @@ def main() -> None:
     output.mkdir(parents=True, exist_ok=True)
     size = int(config.get("world_size", 16))
     layout = StateLayout(int(config.get("materials", 4)), int(config.get("hidden_channels", 8)))
-    model = NeuralCA3D(layout.channels, int(config.get("model_width", 64)), len(MORPHOLOGIES), float(config.get("fire_rate", 0.5)))
+    model = NeuralCA3D(
+        layout.channels, int(config.get("model_width", 64)), len(MORPHOLOGIES), float(config.get("fire_rate", 0.5)),
+        hidden_layers=config.get("hidden_layers"),
+    )
     load_checkpoint(args.checkpoint, model)
     rows = []
     endpoints = one_hot_genomes(torch.arange(len(MORPHOLOGIES)))

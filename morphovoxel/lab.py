@@ -128,12 +128,14 @@ class LabSession:
             model = TreeFamilyNCA3D(
                 layout.channels, int(config.get("model_width", 32)), genome_size,
                 float(config.get("fire_rate", 0.5)), context_channels, len(TREE_FAMILIES),
+                hidden_layers=config.get("hidden_layers"),
             ).to(device).eval()
         else:
             model_class = NeuralCA2D if dimensions == 2 else NeuralCA3D
             model = model_class(
                 layout.channels, int(config.get("model_width", 32)), genome_size,
                 float(config.get("fire_rate", 0.5)), context_channels,
+                hidden_layers=config.get("hidden_layers"),
             ).to(device).eval()
         # Keep optimizer/pool tensors off the GPU; load_state_dict copies model weights.
         checkpoint_sha256 = _load_model_weights(checkpoint, model, model_kind)

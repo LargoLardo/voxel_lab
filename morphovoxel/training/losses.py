@@ -62,12 +62,17 @@ class MorphologyTargets:
 
 
 @torch.no_grad()
-def prepare_morphology_targets(target: torch.Tensor, material: torch.Tensor) -> MorphologyTargets:
+def prepare_morphology_targets(
+    target: torch.Tensor, material: torch.Tensor, *, distance: torch.Tensor | None = None,
+) -> MorphologyTargets:
     """Compute constants once for a batch's growth and persistence losses.
 
     Targets must already use the state's device and floating-point dtype.
     Rebuild after replacing targets; this contains no model-dependent values.
+    A cached distance field must belong to this exact target batch.
     """
+    if distance is not None and distance.shape != target.shape:
+        raise ValueError("cached distance shape must match the target")
     foreground = target > 0.5
     material = material.to(device=target.device, dtype=torch.long)
     coordinates = torch.meshgrid(
@@ -79,7 +84,8 @@ def prepare_morphology_targets(target: torch.Tensor, material: torch.Tensor) -> 
         foreground.flatten(1).sum(1), (~foreground).flatten(1).sum(1),
         material.masked_fill(~foreground, -100),
         tuple((material == index).to(target) for index in (1, 2, 3)),
-        coordinates, _shape_descriptors(target, coordinates), _distance_field(target),
+        coordinates, _shape_descriptors(target, coordinates),
+        _distance_field(target) if distance is None else distance.to(target),
     )
 
 

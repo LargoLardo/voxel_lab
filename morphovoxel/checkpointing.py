@@ -196,6 +196,8 @@ def save_checkpoint(
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_metadata = _checkpoint_metadata(model, config, validation, metadata)
+    if hasattr(model, "hidden_layers"):
+        config = {**(config or {}), "hidden_layers": list(model.hidden_layers), "model_width": model.hidden_layers[0]}
     payload = {
         "checkpoint_format": CHECKPOINT_FORMAT,
         "checkpoint_format_version": CHECKPOINT_FORMAT_VERSION,
@@ -274,7 +276,8 @@ def _load_model_state(path: Path, model: torch.nn.Module, weights: Any) -> None:
             name == "update.0.weight" for name, _, _ in mismatched
         ) else ""
         raise CheckpointCompatibilityError(
-            f"checkpoint {path} is incompatible with {type(model).__name__}: {'; '.join(problems)}.{hint}"
+            f"checkpoint {path} is incompatible with {type(model).__name__}: {'; '.join(problems)}.{hint} "
+            "Use matching hidden_layers and state channels, or train a new model for the new architecture."
         )
     try:
         model.load_state_dict(weights)
@@ -362,6 +365,7 @@ def initialize_tree_family(path: str | Path, model: TreeFamilyNCA3D) -> None:
         source = NeuralCA3D(
             model.channels, model.shared.out_channels, 0, model.fire_rate,
             int(metadata.get("context_channels", 0)),
+            hidden_layers=model.hidden_layers,
         ).to(next(model.parameters()).device)
         load_model_payload(payload, source, checkpoint_path=path, expected_model_kind=kind)
         convert_specialist_to_family(source, model)
@@ -432,14 +436,14 @@ def convert_specialist_to_family(
         raise CheckpointCompatibilityError("destination cannot remove specialist environment context channels")
     if source.fire_rate != destination.fire_rate:
         raise CheckpointCompatibilityError("specialist and family fire rates must match")
+    if source.hidden_layers != destination.hidden_layers:
+        raise CheckpointCompatibilityError(
+            f"specialist and family architectures differ: hidden layers {source.hidden_layers} != {destination.hidden_layers}"
+        )
 
     if isinstance(destination, TreeFamilyNCA3D):
         source_first = source.update[0]
         source_last = source.update[-1]
-        if source_first.out_channels != destination.shared.out_channels:
-            raise CheckpointCompatibilityError("specialist and family hidden widths differ")
-        if source_last.in_channels != destination.heads[0].in_channels:
-            raise CheckpointCompatibilityError("specialist and family output widths differ")
         original = {name: tensor.detach().clone() for name, tensor in destination.state_dict().items()}
         with torch.no_grad():
             destination.shared.weight.zero_()
@@ -450,6 +454,8 @@ def convert_specialist_to_family(
                     :, perception_channels : perception_channels + source.context_channels
                 ].copy_(source_first.weight[:, perception_channels : perception_channels + source.context_channels])
             destination.shared.bias.copy_(source_first.bias)
+            for source_layer, destination_layer in zip(source.update[2:-1], destination.hidden_update):
+                destination_layer.load_state_dict(source_layer.state_dict())
             for film in destination.film:
                 film.weight.zero_()
                 film.bias.zero_()

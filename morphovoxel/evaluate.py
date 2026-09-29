@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import time
 
-import numpy as np
 import pandas as pd
 import torch
 
@@ -31,7 +30,10 @@ def main() -> None:
     layout = StateLayout(int(config.get("materials", 4 if dimensions == 3 else 3)), int(config.get("hidden_channels", 8)))
     conditional = bool(config.get("conditional", dimensions == 3))
     model_class = NeuralCA3D if dimensions == 3 else NeuralCA2D
-    model = model_class(layout.channels, int(config.get("model_width", 32)), len(MORPHOLOGIES) if conditional else 0, 1.0)
+    model = model_class(
+        layout.channels, int(config.get("model_width", 32)), len(MORPHOLOGIES) if conditional else 0, 1.0,
+        hidden_layers=config.get("hidden_layers"),
+    )
     load_checkpoint(args.checkpoint, model)
     rows = []
     kinds = MORPHOLOGIES if conditional else ("branching",)

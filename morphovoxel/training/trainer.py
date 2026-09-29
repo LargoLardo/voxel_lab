@@ -27,7 +27,7 @@ from ..targets.targets_3d import TREE_TARGET_VERSION
 from ..targets.morphology_library import save_target
 from ..utils import create_run_directory, metadata, steps_per_second, write_json, write_live_preview
 from ..validation import ValidationCase, ValidationCriteria, build_candidate_panel, build_validation_panel, validate_panel
-from .losses import counterfactual_loss, morphology_loss, prepare_morphology_targets
+from .losses import _distance_field, counterfactual_loss, morphology_loss, prepare_morphology_targets
 from .family import curriculum_sampling_options, curriculum_values, family_style_seeds, sample_counterfactual_family_data
 from .state_pool import StatePool
 
@@ -153,9 +153,12 @@ def _restore_pool(saved: dict) -> StatePool:
         name: saved.get(name)
         for name in (
             "target_occupancy", "target_materials", "environments",
-            "environment_specs", "style_seeds", "condition_ids", "pair_ids",
+            "environment_specs", "style_seeds", "condition_ids", "pair_ids", "target_distances",
         )
     }
+    if optional["target_occupancy"] is not None and optional["target_distances"] is None:
+        # Older checkpoints predate the derived distance cache.
+        optional["target_distances"] = _distance_field(optional["target_occupancy"])
     return StatePool(saved["states"], saved["genomes"], saved.get("ages"), **optional)
 
 
@@ -181,6 +184,8 @@ def _pool_actions(
     # the configured routine fresh fraction would choose fewer samples.
     fresh_count = min(len(state), max(0, fresh_count, int(invalid.sum())))
     reseed = torch.topk(errors, fresh_count).indices if fresh_count else torch.empty(0, dtype=torch.long, device=state.device)
+    if damage_fraction <= 0:
+        return reseed, reseed.new_empty(0)
     eligible = (ages >= mature_age) & living & valid_target
     if len(reseed):
         eligible[reseed] = False
@@ -205,11 +210,6 @@ def _paired_pool_actions(
         raise ValueError("counterfactual batches must contain adjacent pairs")
     living = state[:, 0].flatten(1).amax(1) > 0.1
     valid_target = target.flatten(1).amax(1) > 0.5
-    entry_error = torch.nan_to_num(
-        (state[:, 0] - target).square().flatten(1).mean(1),
-        nan=float("inf"), posinf=float("inf"), neginf=float("inf"),
-    )
-    pair_error = entry_error.view(-1, 2).amax(1)
     invalid = (~living | ~valid_target).view(-1, 2).any(1)
     pair_count = len(state) // 2
     # Batch order repeats; always taking its first pair starves other genes.
@@ -222,6 +222,13 @@ def _paired_pool_actions(
         [item for pair in sorted(reseed_pairs) for item in (pair * 2, pair * 2 + 1)],
         dtype=torch.long, device=state.device,
     )
+    if damage_fraction <= 0:
+        return reseed, reseed.new_empty(0)
+    entry_error = torch.nan_to_num(
+        (state[:, 0] - target).square().flatten(1).mean(1),
+        nan=float("inf"), posinf=float("inf"), neginf=float("inf"),
+    )
+    pair_error = entry_error.view(-1, 2).amax(1)
     eligible = (ages.view(-1, 2).amin(1) >= mature_age) & living.view(-1, 2).all(1) & valid_target.view(-1, 2).all(1)
     if reseed_pairs:
         eligible[list(reseed_pairs)] = False
@@ -237,11 +244,15 @@ def _paired_pool_actions(
     return reseed, damage
 
 
-def _keep_viable_damage(original: torch.Tensor, damaged: torch.Tensor) -> torch.Tensor:
-    """Do not turn a regenerating sample into an unrecoverable all-dead state."""
+def _keep_viable_damage(original: torch.Tensor, damaged: torch.Tensor, *, paired: bool = False) -> torch.Tensor:
+    """Reject lethal damage, keeping counterfactual pairs on the same damage mask."""
     if original.shape != damaged.shape:
         raise ValueError("original and damaged states must have the same shape")
     living = damaged[:, 0].flatten(1).amax(1) > 0.1
+    if paired:
+        if len(original) % 2:
+            raise ValueError("paired damage requires adjacent even-sized pairs")
+        living = living.view(-1, 2).all(1).repeat_interleave(2)
     return torch.where(living.view(-1, *([1] * (damaged.ndim - 1))), damaged, original)
 
 
@@ -356,13 +367,17 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         model = TreeFamilyNCA3D(
             layout.channels, int(config.get("model_width", 32)), genome_size,
             float(config.get("fire_rate", 0.5)), context_channels, len(TREE_FAMILIES),
+            hidden_layers=config.get("hidden_layers"),
         ).to(device)
     else:
         model_class = NeuralCA3D if dimensions == 3 else NeuralCA2D
         model = model_class(
             layout.channels, int(config.get("model_width", 32)), genome_size,
             float(config.get("fire_rate", 0.5)), context_channels,
+            hidden_layers=config.get("hidden_layers"),
         ).to(device)
+    config["hidden_layers"] = list(model.hidden_layers)
+    config["model_width"] = model.hidden_layers[0]
     initialize_from = config.get("initialize_from_specialist")
     weight_source = config.get("initialize_from_checkpoint")
     if sum(bool(config.get(key)) for key in ("resume", "initialize_from_specialist", "initialize_from_checkpoint")) > 1:
@@ -382,6 +397,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             0,
             float(config.get("fire_rate", 0.5)),
             source_context_channels,
+            hidden_layers=model.hidden_layers,
         ).to(device)
         load_checkpoint(
             initialize_from,
@@ -482,9 +498,14 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     minimum_leaf_voxels = int(config.get("minimum_leaf_voxels", 1))
     if minimum_branch_voxels < 0 or minimum_leaf_voxels < 0:
         raise ValueError("minimum branch and leaf voxel counts must be non-negative")
-    if tree_family:
-        if batch % 2 or pool_size % 2:
-            raise ValueError("tree-family counterfactual batch_size and pool_size must be even")
+    if tree_family and (batch % 2 or pool_size % 2):
+        raise ValueError("tree-family counterfactual batch_size and pool_size must be even")
+    if restored and restored.get("pool") and not bool(config.get("reset_pool_on_resume", False)):
+        pool = _restore_pool(restored["pool"])
+    # Generate fresh entries only when the saved pool cannot supply this run.
+    initialize_pool = pool is None or len(pool.states) < pool_size
+    initialized_pool = None
+    if tree_family and initialize_pool:
         initial = curriculum_values(start - curriculum_start, curriculum_iterations, config)
         family = sample_counterfactual_family_data(
             pool_size // 2, size, seed,
@@ -500,7 +521,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             seed_size=int(config.get("seed_size", 1)), noise=float(config.get("seed_noise", 0)),
             random_seed=seed, device="cpu",
         ).repeat_interleave(2, 0)
-        pool = StatePool(
+        initialized_pool = StatePool(
             pool_states,
             family.model_genomes,
             target_occupancy=family.target_occupancy,
@@ -510,35 +531,52 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             style_seeds=family.style_seeds,
             condition_ids=family.condition_ids,
             pair_ids=family.pair_ids,
+            target_distances=family.target_distances,
         )
-    elif pool_size:
+    elif pool_size and initialize_pool:
         pool_labels = torch.arange(pool_size) % (len(MORPHOLOGIES) if conditional else 1)
         pool_genomes = one_hot_genomes(pool_labels) if conditional else pool_labels[:, None].float()
         pool_states = seed_state(pool_size, size, layout, dimensions=dimensions, device="cpu")
-        pool = StatePool(pool_states, pool_genomes)
-    if restored and restored.get("pool") and not bool(config.get("reset_pool_on_resume", False)):
-        initialized_pool = pool
-        pool = _restore_pool(restored["pool"])
-        if initialized_pool is not None and len(pool.states) < len(initialized_pool.states):
+        initialized_pool = StatePool(pool_states, pool_genomes)
+    if initialized_pool is not None:
+        if pool is None:
+            pool = initialized_pool
+        else:
             pool.append_from(initialized_pool, len(pool.states))
-        if tree_family and any(getattr(pool, name) is None for name in (
-            "target_occupancy", "target_materials", "environments",
-            "environment_specs", "style_seeds", "condition_ids", "pair_ids",
-        )):
-            raise ValueError(
-                "tree-family checkpoint pool is missing paired target/environment/style data "
-                "or counterfactual pair identity data"
-            )
-    specialist_target = specialist_material = specialist_context = None
+    if tree_family and any(getattr(pool, name) is None for name in (
+        "target_occupancy", "target_materials", "environments",
+        "environment_specs", "style_seeds", "condition_ids", "pair_ids",
+    )):
+        raise ValueError(
+            "tree-family checkpoint pool is missing paired target/environment/style data "
+            "or counterfactual pair identity data"
+        )
+    specialist_target = specialist_material = specialist_context = specialist_prepared_targets = None
     if tree_specialist:
         occupancy, materials = make_tree_target(tree_default, size, environment_default)
         specialist_target = torch.as_tensor(np.repeat(occupancy[None], batch, 0), device=device)
         specialist_material = torch.as_tensor(np.repeat(materials[None], batch, 0), dtype=torch.long, device=device)
         if context_channels:
             specialist_context = environment_context_batch([environment_default] * batch, size, device=device)
+        specialist_prepared_targets = prepare_morphology_targets(specialist_target, specialist_material)
     final_state = final_target = final_materials = None
     best_score, last_validation = float("-inf"), None
     previous_stage = None
+    best_checkpoint = run / "checkpoints" / "best.pt"
+    if restored and best_checkpoint.is_file():
+        # Read the actual incumbent, which may be newer than the resumed file.
+        incumbent = torch.load(best_checkpoint, map_location="cpu", weights_only=False)
+        run_options = {
+            "run_name", "runs_root", "iterations", "resume", "initialize_from_checkpoint",
+            "initialize_from_specialist", "reset_pool_on_resume", "dashboard_run_name",
+        }
+        old_settings = {key: value for key, value in (incumbent.get("config") or {}).items() if key not in run_options}
+        new_settings = {key: value for key, value in config.items() if key not in run_options}
+        if old_settings == new_settings and incumbent.get("validation"):
+            last_validation = incumbent["validation"]
+            best_score = float(last_validation.get("best_worst_genome_persistence_score", float("-inf")))
+            previous_stage = last_validation.get("curriculum_stage")
+        del incumbent
     pair_cursor = (start * accumulation_steps * max(1, batch // 2)) if tree_family else 0
     for micro_step in range(start * accumulation_steps, (start + iterations) * accumulation_steps):
         step = micro_step // accumulation_steps
@@ -625,6 +663,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                     genomes[reseed] = replacement.model_genomes
                     target[reseed] = replacement.target_occupancy
                     material[reseed] = replacement.target_materials
+                    pool_batch.target_distances[reseed] = replacement.target_distances
                     if context is not None:
                         context[reseed] = replacement.environments
                     pool_batch.style_seeds[reseed] = replacement.style_seeds
@@ -639,6 +678,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                         style_seeds=replacement.style_seeds,
                         condition_ids=pool_batch.condition_ids[reseed],
                         pair_ids=pool_batch.pair_ids[reseed],
+                        target_distances=replacement.target_distances,
                     )
             if len(damage):
                 from ..damage import damage_3d
@@ -651,9 +691,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                         random.choice(config.get("damage_types", ["sphere", "cuboid", "top"])),
                         seed + micro_step + indices[0],
                     )
-                    viable = _keep_viable_damage(original, damaged)
-                    if not tree_family or bool((viable[:, 0].flatten(1).amax(1) > 0.1).all()):
-                        state[indices] = viable
+                    state[indices] = _keep_viable_damage(original, damaged, paired=tree_family)
         else:
             state = seed_state(batch, size, layout, dimensions=dimensions, seed_size=int(config.get("seed_size", 1)), noise=float(config.get("seed_noise", 0)), random_seed=seed + micro_step, device=device)
             if tree_family:
@@ -676,7 +714,12 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             target, material = target[::2], material[::2]
             context = context[::2] if context is not None else None
         paired_rollout = tree_family and not basic_batch
-        prepared_targets = prepare_morphology_targets(target.to(state), material)
+        distance = pool_batch.target_distances if tree_family else None
+        if basic_batch:
+            distance = distance[::2]
+        prepared_targets = specialist_prepared_targets or prepare_morphology_targets(
+            target.to(state), material, distance=distance,
+        )
         preview_started = time.perf_counter() if preview_image and optimizer_update and (step + 1) % 10 == 0 else None
         final_state, _ = rollout(
             model, state, steps, genomes, context=context, shared_fire_pairs=paired_rollout,

@@ -5,6 +5,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from .config import resolve_hidden_layers
 from .perception_2d import perceive_2d
 
 
@@ -18,6 +19,8 @@ class NeuralCA2D(nn.Module):
         genome_size: int = 0,
         fire_rate: float = 0.5,
         context_channels: int = 0,
+        *,
+        hidden_layers: list[int] | tuple[int, ...] | None = None,
     ):
         super().__init__()
         if not 0 < fire_rate <= 1:
@@ -25,9 +28,12 @@ class NeuralCA2D(nn.Module):
         if context_channels < 0:
             raise ValueError("context_channels must be non-negative")
         self.channels, self.genome_size, self.context_channels, self.fire_rate = channels, genome_size, context_channels, fire_rate
-        self.update = nn.Sequential(
-            nn.Conv2d(channels * 4 + genome_size + context_channels, hidden, 1), nn.ReLU(), nn.Conv2d(hidden, channels, 1)
-        )
+        self.hidden_layers = resolve_hidden_layers(hidden, hidden_layers)
+        widths = (channels * 4 + genome_size + context_channels, *self.hidden_layers)
+        layers = []
+        for incoming, outgoing in zip(widths, widths[1:]):
+            layers.extend((nn.Conv2d(incoming, outgoing, 1), nn.ReLU()))
+        self.update = nn.Sequential(*layers, nn.Conv2d(widths[-1], channels, 1))
         nn.init.normal_(self.update[-1].weight, std=1e-3)
         nn.init.zeros_(self.update[-1].bias)
 
