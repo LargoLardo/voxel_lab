@@ -67,12 +67,18 @@ class ValidationCase:
     genome: TreeGenome
     environment: EnvironmentSpec
     fire_seed: int
+    source_genome: TreeGenome | None = None
+    source_steps: int = 0
 
     def __post_init__(self) -> None:
         if not self.case_id or not self.category:
             raise ValueError("validation case id and category cannot be empty")
         if isinstance(self.fire_seed, bool) or not isinstance(self.fire_seed, int) or not 0 <= self.fire_seed < 2**63:
             raise ValueError("fire seed must be an integer from 0 through 2^63-1")
+        if isinstance(self.source_steps, bool) or not isinstance(self.source_steps, int) or self.source_steps < 0:
+            raise ValueError("source_steps must be a non-negative integer")
+        if (self.source_genome is None) != (self.source_steps == 0):
+            raise ValueError("transition validation needs a source genome and positive source_steps")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -81,6 +87,8 @@ class ValidationCase:
             "genome": self.genome.to_dict(),
             "environment": self.environment.to_dict(),
             "fire_seed": self.fire_seed,
+            **({"source_genome": self.source_genome.to_dict(), "source_steps": self.source_steps}
+               if self.source_genome is not None else {}),
         }
 
 
@@ -293,6 +301,21 @@ def build_candidate_panel(
     return _panel_cases((("candidate", genome),), tuple(environments or _representative_environments(seed)), tuple(fire_seeds))
 
 
+def build_transition_panel(
+    *, style_seeds: Sequence[int], fire_seeds: Sequence[int], source_steps: int = 128,
+) -> tuple[ValidationCase, ...]:
+    """Test every directed family switch at fixed genes, style and environment."""
+    return tuple(
+        ValidationCase(
+            f"transition-{source}-to-{destination}-s{style}-f{fire}", "transition",
+            TreeGenome(family=destination, style_seed=style), EnvironmentSpec(), fire,
+            TreeGenome(family=source, style_seed=style), source_steps,
+        )
+        for source in TREE_FAMILIES for destination in TREE_FAMILIES if source != destination
+        for style in style_seeds for fire in fire_seeds
+    )
+
+
 def _model_inputs(model, case: ValidationCase, size: int, device: torch.device) -> tuple[torch.Tensor | None, torch.Tensor | None]:
     genome_size = int(getattr(model, "genome_size", 0))
     if genome_size not in (0, TreeGenome.model_size()):
@@ -393,11 +416,21 @@ def validate_candidate(
     mature_steps = steps - late_steps
     was_training = bool(model.training)
     model.eval()
+    source_state = None
+    source_iou = None
     try:
         with torch.inference_mode(), fork_rng(run_device):
             torch.manual_seed(case.fire_seed)
             if run_device.type == "cuda":
                 torch.cuda.manual_seed_all(case.fire_seed)
+            if case.source_genome is not None:
+                if genome is None:
+                    raise ValueError("transition validation requires a tree-family model")
+                source_genome = tree_genome_tensor((case.source_genome,), device=run_device)
+                state, _ = rollout(model, state, case.source_steps, source_genome, context=context)
+                source_state = state
+                source_target, _ = make_tree_target(case.source_genome, world_size, case.environment)
+                source_iou = threshold_iou(state[0, layout.occupancy], torch.as_tensor(source_target, device=run_device))
             mature, _ = rollout(model, state, mature_steps, genome, context=context)
             final, _ = rollout(model, mature, late_steps, genome, context=context) if bool(torch.isfinite(mature).all()) else (mature, [])
             if bool(torch.isfinite(final).all()):
@@ -434,7 +467,7 @@ def validate_candidate(
     # Score materials over the required target body. Using predicted occupancy
     # as the mask would reward an empty organism with perfect material accuracy.
     material_score = material_accuracy(final[0, layout.material_slice], target_material, target) if bool(torch.isfinite(final).all()) else 0.0
-    safety = _state_safety((mature, final, recovered), layout, criteria)
+    safety = _state_safety((mature, final, recovered) + ((source_state,) if source_state is not None else ()), layout, criteria)
     metrics = {
         **safety,
         **_safe_metric_values(occupancy, target),
@@ -452,6 +485,11 @@ def validate_candidate(
     }
 
     failures: list[str] = []
+    if source_iou is not None:
+        metrics["source_target_iou"] = source_iou
+        metrics["transition_initial_target_iou"] = threshold_iou(source_state[0, layout.occupancy], target)
+        if source_iou < criteria.min_target_iou:
+            failures.append("source_target_iou_below_minimum")
     if steps < criteria.min_steps:
         failures.append("insufficient_validation_steps")
     if recovery_steps < criteria.min_recovery_steps:
@@ -474,6 +512,8 @@ def validate_candidate(
         descriptors["largest_component_fraction"], target_iou, material_score, descriptor_agreement,
         max(0.0, 1 - late_drift), regeneration_score,
     )
+    if source_iou is not None:
+        score_parts += (source_iou,)
     score = min(score_parts) if validated else 0.0
     return ValidationTrial(case, steps, recovery_steps, validated, not failures, float(np.clip(score, 0, 1)), tuple(failures), metrics, descriptors)
 

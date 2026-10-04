@@ -4,8 +4,10 @@ model_kind: tree_family
 conditional: true
 environment_conditioning: true
 initialize_from_checkpoint: runs/tree_specialist/checkpoints/best.pt
-# full: basic families followed by variation; basics / variation: only that part.
+# full: basics then variation; basics / variation / transition: only that part.
 family_curriculum: full
+# Transition grows the source before switching family, retaining its voxel state.
+transition_source_steps: 128
 basic_family_fraction: 0.25
 family_style_seeds: [0, 970806, 1941611, 2912417]
 neutral_fraction: 0.25

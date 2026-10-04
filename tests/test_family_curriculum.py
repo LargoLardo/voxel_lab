@@ -201,6 +201,9 @@ def test_phase_two_samples_progress_from_neutral_to_single_genes_to_combinations
             assert low.value("light_tropism") == high.value("light_tropism") == 0
     assert curriculum_values(99, 100, {"family_curriculum": "basics"})["genome_span"] == 0
     assert curriculum_values(0, 100, {"family_curriculum": "variation"})["genome_span"] > 0
+    transition = curriculum_values(0, 100, {"family_curriculum": "transition"})
+    assert transition["curriculum_stage"] == "transition"
+    assert transition["genome_span"] == transition["environment_span"] == 0
 
 
 @pytest.mark.parametrize("override", [
@@ -210,6 +213,54 @@ def test_phase_two_samples_progress_from_neutral_to_single_genes_to_combinations
 def test_phase_two_rejects_invalid_schedules(override):
     with pytest.raises(ValueError):
         curriculum_values(0, 100, {"family_curriculum": "full", **override})
+
+
+@pytest.mark.parametrize("device", ["cpu", pytest.param("mps", marks=pytest.mark.skipif(
+    not torch.backends.mps.is_available(), reason="Apple GPU unavailable",
+))])
+def test_transition_training_changes_family_with_gradients_but_preserves_source_pool(tmp_path, monkeypatch, device):
+    from morphovoxel.training import trainer
+    from morphovoxel.training.family import sample_transition_destinations
+    from morphovoxel.genomes import tree_genome_tensor
+
+    source = TreeGenome(family="weeping", style_seed=970806).with_values({"height": .3})
+    destinations = sample_transition_destinations(tree_genome_tensor([source] * 48), torch.full((48,), source.style_seed), 12, 41)
+    assert {genome.family for genome in destinations.genomes} == set(TREE_FAMILIES) - {source.family}
+    assert all(genome.genes == pytest.approx(source.genes) and genome.style_seed == source.style_seed for genome in destinations.genomes)
+
+    calls = []
+    original = trainer.rollout
+    def observed(model, state, steps, genome=None, *args, **kwargs):
+        result = original(model, state, steps, genome, *args, **kwargs)
+        calls.append((torch.is_grad_enabled(), steps, genome.detach().cpu().clone(), state.detach().cpu().clone(), result[0].detach().cpu().clone()))
+        return result
+    monkeypatch.setattr(trainer, "rollout", observed)
+    monkeypatch.setattr(trainer.random, "random", lambda: .5)  # Exercise a switched batch.
+    config = {
+        "run_name": "transition", "runs_root": str(tmp_path), "model_kind": "tree_family",
+        "family_curriculum": "transition", "device": device, "world_size": 12,
+        "batch_size": 8, "pool_size": 64, "materials": 4, "hidden_channels": 1,
+        "hidden_layers": [4, 4], "fire_rate": 1, "iterations": 1,
+        "transition_source_steps": 2, "rollout_steps": 1, "persistence_steps": 1,
+        "validation_steps": 0, "family_style_seeds": [0],
+    }
+    run = train(config, dimensions=3, conditional=True)
+    warmup, switched, persistence = calls[:3]
+    assert not warmup[0] and warmup[1] == 2
+    assert switched[0] and persistence[0]
+    assert (warmup[2][:, :4].argmax(1) != switched[2][:, :4].argmax(1)).all()
+    torch.testing.assert_close(warmup[2][:, 4:], switched[2][:, 4:])
+    torch.testing.assert_close(warmup[4], switched[3])
+    payload = torch.load(run / "checkpoints/latest.pt", map_location="cpu", weights_only=False)
+    pool = StatePool(**payload["pool"])
+    selected = pool.sample_stratified_pairs(8, 0)
+    torch.testing.assert_close(selected.genomes[::2], warmup[2])
+    torch.testing.assert_close(selected.states[::2], warmup[4])
+    assert selected.ages.eq(2).all()
+    assert any(value["exp_avg"].abs().sum() > 0 for value in payload["optimizer"]["state"].values())
+    # True resume retains the transition curriculum and its source pool.
+    resumed = train({**config, "run_name": "resumed", "resume": str(run / "checkpoints/latest.pt")}, dimensions=3, conditional=True)
+    assert torch.load(resumed / "checkpoints/latest.pt", map_location="cpu", weights_only=False)["step"] == 2
 
 
 @pytest.mark.parametrize("device", [
@@ -232,9 +283,10 @@ def test_phase_two_checkpoint_handoffs_and_full_curriculum_validation(tmp_path, 
         "validation_mutation_count": 0, "validation_boundary_genes": [],
     }
     source = specialist
-    for mode in ("basics", "variation", "basics", "full"):
+    for mode in ("transition", "basics", "variation", "transition", "basics", "full"):
         run = train({
             **config, "run_name": f"from_{source.parent.name}_{mode}", "family_curriculum": mode,
+            "transition_source_steps": 2,
             "initialize_from_checkpoint": str(source),
         }, dimensions=3, conditional=True)
         source = run / "checkpoints" / "latest.pt"
@@ -254,6 +306,14 @@ def test_phase_two_checkpoint_handoffs_and_full_curriculum_validation(tmp_path, 
             assert all(not any(case["genome"]["genes"].values()) for case in panel)
         best = torch.load(run / "checkpoints" / "best.pt", map_location="cpu", weights_only=False)
         assert best["validation"]["curriculum_stage"] == ("variation" if mode == "full" else mode)
+        if mode == "transition":
+            validation = pd.read_csv(run / "metrics" / "persistence_validation.csv")
+            assert len(validation) == 24
+            assert (validation.source_family != validation.family).all()
+            assert "metric_source_target_iou" in validation
+            assert "counterfactual" not in logs
+            assert "transition_fraction" in logs
+            assert (run / "rollouts" / "transition.json").is_file()
     # A true resume continues the full curriculum's variation phase, even with a
     # new update budget. It must not restart basic training with a varied pool.
     resumed = train({

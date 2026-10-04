@@ -4,6 +4,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import pytest
+import torch
 
 from morphovoxel.checkpointing import CheckpointCompatibilityError, save_checkpoint
 from morphovoxel.config import save_config
@@ -167,6 +168,12 @@ def test_tree_family_lab_keeps_genome_pending_until_reset_and_updates_environmen
     assert updated["environment"]["light_direction_x"] == 1
     assert lab.context.shape == (1, len(ENVIRONMENT_CHANNELS), 16, 16, 16)
     assert lab.advance(1)["steps"] == 1
+    existing_state = lab.state.clone()
+    remodeled = {**changed, "family": "weeping"}
+    switched = lab.set_tree_genome(remodeled, live_remodel=True)
+    assert switched["active_tree_genome"]["family"] == "weeping"
+    assert switched["steps"] == 1
+    torch.testing.assert_close(lab.state, existing_state)
     assert lab.voxel_data(source="target")["voxels"]
     assert lab.voxel_data(source="environment:light")["voxels"]
     validation = lab.validate_tree_candidate(steps=2, recovery_steps=1, fire_seeds=(0,))

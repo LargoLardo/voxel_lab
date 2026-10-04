@@ -321,11 +321,12 @@ const state={runs:[
 ]};
 $('#configSelect').value='tree_family.yaml';
 """ + "\n".join(functions) + r"""
-for(const mode of ['full','basics','variation']){
+for(const mode of ['full','basics','variation','transition']){
   $('#editor').value=`family_curriculum: ${mode}\ninitialize_from_checkpoint: runs/basic_families/checkpoints/best.pt\n`;
   syncDependencyCheckpoints();
   assert.equal($('#familyCurriculum').value,mode);
   assert.equal($('#familyCurriculumField').hidden,false);
+  assert.notEqual($('#familyCurriculumHint').textContent,'Choose a valid curriculum.');
   assert.equal($('#dependencyCheckpoint').value,'runs/basic_families/checkpoints/best.pt');
   assert.match($('#dependencyCheckpoint').innerHTML,/runs\/specialist\/checkpoints\/best.pt/);
   assert.match($('#dependencyCheckpoint').innerHTML,/basic_families.pt/);
@@ -579,6 +580,7 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         assert "'tree_family.yaml':{key:'initialize_from_checkpoint'" in root
         assert 'id="familyCurriculum"' in root
         assert "Learn the basic families only" in root and "Learn variation only" in root
+        assert "Learn live family transitions" in root
         assert "models:['tree_specialist','tree_family']" in root
         assert "'tree_regeneration.yaml':{key:'resume'" in root
         assert "'tree_environment.yaml':{key:'resume'" in root

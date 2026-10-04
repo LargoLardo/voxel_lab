@@ -94,12 +94,12 @@ The individual commands are:
 
 Do not skip a prerequisite unless you replace its checkpoint path with a compatible checkpoint. Loading mismatched model shapes is rejected rather than silently reinterpreted.
 
-In the dashboard's **02 Tree Family** page, choose **Entire curriculum**, **Learn the basic families only**, or **Learn variation only**, then choose **Start from checkpoint**. All three choices accept compatible specialist and Phase 2 checkpoints. For example: specialist → basic families → variation → regeneration. Use a new run name for each handoff.
+In the dashboard's **02 Tree Family** page, choose **Basic families + variation**, **Learn the basic families only**, **Learn variation only**, or **Learn live family transitions**, then choose **Start from checkpoint**. All choices accept compatible specialist and Phase 2 checkpoints. For transitions, prefer a checkpoint that already grows all four families. For example: specialist → basic families → variation → transition → regeneration. Use a new run name for each handoff.
 
 The same options work in YAML:
 
 ```yaml
-family_curriculum: variation  # full, basics, or variation
+family_curriculum: variation  # full, basics, variation, or transition
 initialize_from_checkpoint: runs/my_basic_families/checkpoints/best.pt
 iterations: 8000
 ```
@@ -111,6 +111,10 @@ The full curriculum allocates the first 25% of updates to basic families (`basic
 Variation-only uses the entire budget for variation; full uses its remaining budget. Variation begins with single-gene deviations near ±0.15, widening to ±1 at 45% of the variation budget. After the first 25% (`combination_start_fraction`), other genes and random style seeds gradually enter the examples. Neutral pairs are sampled with probability 25% (`neutral_fraction`) throughout variation to help preserve the basic shapes. All weights remain trainable. `best.pt` comparisons restart when full training switches to variation, because scores on the two validation panels are not comparable. Logs record `curriculum_stage`, gene ranges, and sampling fractions.
 
 Routine pool refreshes select the oldest sampled pairs, so every healthy family/gene condition receives updated curriculum examples. Dead pairs are still reseeded immediately. Accepted targets are reused when assembling a batch; identical neutral pairs generate their target once.
+
+`family_curriculum: transition` teaches live remodeling between families. About 75% of batches grow source organisms for at least `transition_source_steps: 128` total steps, then change only their family input, retaining every occupancy, material and hidden-state channel. The destination is sampled from the other three families. The usual `rollout_steps` train the switch and `persistence_steps` train retention of the new shape. Source preparation runs without gradients; the trainable rollout starts at the switch. Source states are reused in the pool without overwriting their identity with switched states. The remaining 25% of batches rehearse ordinary growth and persistence to limit forgetting.
+
+This first transition curriculum uses neutral genes, the configured basic style seeds, and a fixed environment. It teaches all 12 directed family changes, not arbitrary simultaneous gene/environment changes or repeated switches within one training rollout. Validation grows each source from a seed, switches it without resetting, then checks destination shape, persistence and damage recovery. A poor source shape also fails validation. With four styles and two fire seeds this is 96 trials, so validation costs more than basics. The CSV records source/destination identity and source IoU. The saved `growth.gif` demonstrates branching → weeping; `rollouts/transition.json` records the switch. In the Tree Genome Lab, load the resulting checkpoint, grow a tree, enable **Live remodel this mature organism**, choose another family and apply it. The existing `full` schedule remains basics → variation; run transitions as a separate checkpoint handoff.
 
 ## Smoke checks
 

@@ -26,9 +26,9 @@ from ..targets import make_target_2d, make_target_3d, make_tree_target
 from ..targets.targets_3d import TREE_TARGET_VERSION
 from ..targets.morphology_library import save_target
 from ..utils import create_run_directory, metadata, steps_per_second, write_json, write_live_preview
-from ..validation import ValidationCase, ValidationCriteria, build_candidate_panel, build_validation_panel, validate_panel
+from ..validation import ValidationCase, ValidationCriteria, build_candidate_panel, build_transition_panel, build_validation_panel, validate_panel
 from .losses import _distance_field, counterfactual_loss, morphology_loss, prepare_morphology_targets
-from .family import curriculum_sampling_options, curriculum_values, family_style_seeds, sample_counterfactual_family_data
+from .family import curriculum_sampling_options, curriculum_values, family_style_seeds, sample_counterfactual_family_data, sample_transition_destinations
 from .state_pool import StatePool
 
 LOGGER = logging.getLogger(__name__)
@@ -343,12 +343,13 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             "training_genome_ranges",
             {
                 spec.name: [spec.minimum, spec.maximum]
-                if config.get("family_curriculum") != "basics" and (spec.name != "light_tropism" or train_light_tropism) else [0.0, 0.0]
+                if config.get("family_curriculum") not in {"basics", "transition"} and (spec.name != "light_tropism" or train_light_tropism) else [0.0, 0.0]
                 for spec in TREE_GENE_SPECS
             },
         )
         config.setdefault("validation_panel", {
-            "categories": ["default", "boundary", "random", "interpolation", "mutation", "archive"],
+            "categories": (["transition"] if config.get("family_curriculum") == "transition"
+                           else ["default", "boundary", "random", "interpolation", "mutation", "archive"]),
             "fire_seeds": config.get("validation_fire_seeds", [seed + 100_000, seed + 100_001]),
             "steps": int(config.get("validation_steps", 256)),
         })
@@ -437,6 +438,10 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         config["family_curriculum_start_step"] = curriculum_start
         config["family_curriculum_iterations"] = curriculum_iterations
         curriculum_values(start - curriculum_start, curriculum_iterations, config)
+    transition_source_steps = config.get("transition_source_steps", 128)
+    if config.get("family_curriculum") == "transition":
+        if isinstance(transition_source_steps, bool) or not isinstance(transition_source_steps, int) or transition_source_steps < 1:
+            raise ValueError("transition_source_steps must be a positive integer")
     run = create_run_directory(str(config.get("run_name", f"phase{dimensions}d")), config.get("runs_root", "runs"))
     save_config(config, run / "config.yaml")
     run_metadata, started = metadata(seed, model, device), time.perf_counter()
@@ -706,7 +711,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         steps, persistence_steps = _training_horizons(
             (minimum, maximum), (persistence_minimum, persistence_maximum), differentiable_step_limit,
         )
-        basic_batch = current_stage == "basics"
+        basic_batch = current_stage in {"basics", "transition"}
         if basic_batch:
             # Neutral pairs start identically and share fire masks and damage.
             # Grow each once, then restore both pool slots after the update.
@@ -717,6 +722,25 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         distance = pool_batch.target_distances if tree_family else None
         if basic_batch:
             distance = distance[::2]
+        # Rehearse ordinary growth on 25% of batches, independently of the pool
+        # cursor so no family is assigned only rehearsal or only transitions.
+        # The source pool always
+        # retains its original identity; switched states must not enter it.
+        transition_batch = current_stage == "transition" and random.random() >= 0.25
+        transition_source = None
+        source_elapsed = 0
+        if transition_batch:
+            source_elapsed = max(0, transition_source_steps - int(pool_batch.ages[::2].min()))
+            with torch.no_grad():
+                transition_source, _ = rollout(model, state, source_elapsed, genomes, context=context)
+            state = transition_source.detach()
+            destination = sample_transition_destinations(
+                genomes, pool_batch.style_seeds[::2], size, seed + 20_000 + micro_step,
+                minimum_branch_voxels=minimum_branch_voxels,
+                minimum_leaf_voxels=minimum_leaf_voxels,
+            )
+            genomes = destination.model_genomes
+            target, material, distance = destination.target_occupancy, destination.target_materials, destination.target_distances
         prepared_targets = specialist_prepared_targets or prepare_morphology_targets(
             target.to(state), material, distance=distance,
         )
@@ -728,7 +752,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             final_state, target, material, layout, config.get("loss_weights"), state_limit=state_limit,
             prepared_targets=prepared_targets,
         )
-        if tree_family and current_stage != "basics":
+        if tree_family and not basic_batch:
             components["counterfactual"] = counterfactual_loss(final_state, target, layout)
             loss = loss + float(config.get("counterfactual_weight", 1.0)) * components["counterfactual"]
         committed_state = final_state
@@ -743,12 +767,14 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             components["persistence"] = persistence_loss
             components.update({f"persistence_{name}": value for name, value in persistence_components.items()})
             loss = loss + float(config.get("persistence_weight", 1.0)) * persistence_loss
-            if tree_family and current_stage != "basics":
+            if tree_family and not basic_batch:
                 persistence_counterfactual = counterfactual_loss(committed_state, target, layout)
                 components["persistence_counterfactual"] = persistence_counterfactual
                 loss = loss + float(config.get("persistence_weight", 1.0)) * float(
                     config.get("counterfactual_weight", 1.0)
                 ) * persistence_counterfactual
+        if current_stage == "transition":
+            components["transition_fraction"] = loss.new_tensor(float(transition_batch))
         if preview_started is not None:
             total_steps = steps + persistence_steps
             write_live_preview(
@@ -769,8 +795,9 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             if scheduler:
                 scheduler.step()
         if pool and pool_batch:
-            pool_state = committed_state.detach().repeat_interleave(2, 0) if basic_batch else committed_state
-            pool.commit(pool_batch, pool_state, steps + persistence_steps)
+            pool_state = transition_source if transition_batch else committed_state
+            pool_state = pool_state.detach().repeat_interleave(2, 0) if basic_batch else pool_state
+            pool.commit(pool_batch, pool_state, source_elapsed if transition_batch else steps + persistence_steps)
         final_state = committed_state
         final_target, final_materials = target, material
         if not optimizer_update:
@@ -803,7 +830,12 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                     environments = (environment_default,)
                 if phase_two:
                     environments = (EnvironmentSpec(),)
-                if current_stage == "basics":
+                if current_stage == "transition":
+                    panel = build_transition_panel(
+                        style_seeds=family_style_seeds(config), fire_seeds=fire_seeds,
+                        source_steps=transition_source_steps,
+                    )
+                elif current_stage == "basics":
                     panel = tuple(
                         ValidationCase(
                             f"basic-{family}-s{style}-f{fire_seed}", "basic_family",
@@ -872,6 +904,9 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                         "family": trial.case.genome.family,
                         "style_seed": trial.case.genome.style_seed,
                         "genome": json.dumps(trial.case.genome.to_dict(), sort_keys=True),
+                        **({"source_family": trial.case.source_genome.family,
+                            "source_genome": json.dumps(trial.case.source_genome.to_dict(), sort_keys=True),
+                            "source_steps": trial.case.source_steps} if trial.case.source_genome is not None else {}),
                         "environment": json.dumps(trial.case.environment.to_dict(), sort_keys=True),
                         "fire_seed": trial.case.fire_seed,
                         "validation_steps": trial.steps,
@@ -963,7 +998,25 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         capture_genome = None
         capture_context = specialist_context[:1] if specialist_context is not None else None
     with torch.no_grad():
-        _, frames = rollout(model, capture, int(maximum), capture_genome, capture_every, context=capture_context)
+        if config.get("family_curriculum") == "transition":
+            source = TreeGenome(family="branching", style_seed=family_style_seeds(config)[0])
+            destination = TreeGenome(family="weeping", style_seed=source.style_seed)
+            capture_context = environment_context_batch([EnvironmentSpec()], size, device=device) if context_channels else None
+            capture, frames = rollout(
+                model, capture, transition_source_steps, tree_genome_tensor([source], device=device),
+                capture_every, context=capture_context,
+            )
+            _, transition_frames = rollout(
+                model, capture, max(1, maximum + persistence_maximum), tree_genome_tensor([destination], device=device),
+                capture_every, context=capture_context,
+            )
+            frames.extend(transition_frames[1:])
+            write_json(run / "rollouts" / "transition.json", {
+                "source_genome": source.to_dict(), "destination_genome": destination.to_dict(),
+                "switch_step": transition_source_steps,
+            })
+        else:
+            _, frames = rollout(model, capture, int(maximum), capture_genome, capture_every, context=capture_context)
     np.savez_compressed(run / "rollouts" / "states.npz", states=np.stack([frame.numpy() for frame in frames]))
     if dimensions == 2:
         from ..rendering_2d import save_comparison, save_gif, save_hidden_channels

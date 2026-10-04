@@ -9,7 +9,7 @@ import numpy as np
 import torch
 
 from ..environment import EnvironmentSpec, make_environment_context
-from ..genomes import FAMILY_GENE_NAMES, TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome, tree_genome_tensor
+from ..genomes import FAMILY_GENE_NAMES, TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome, tree_genome_from_vector, tree_genome_tensor
 from ..targets import make_tree_target
 from .losses import _distance_field
 
@@ -116,15 +116,17 @@ def curriculum_values(step: int, iterations: int, config: dict) -> dict[str, flo
     mode = config.get("family_curriculum")
     stage = "variation"
     if mode is not None:
-        if mode not in {"full", "basics", "variation"}:
-            raise ValueError("family_curriculum must be full, basics, or variation")
+        if mode not in {"full", "basics", "variation", "transition"}:
+            raise ValueError("family_curriculum must be full, basics, variation, or transition")
         fraction = float(config.get("basic_family_fraction", 0.25))
         if not 0 < fraction < 1:
             raise ValueError("basic_family_fraction must be between zero and one")
         if mode == "full" and iterations < 2:
             raise ValueError("the full family curriculum requires at least two iterations")
         basic_steps = min(iterations - 1, max(1, int(iterations * fraction))) if mode == "full" else 0
-        if mode == "basics" or (mode == "full" and step < basic_steps):
+        if mode == "transition":
+            stage = "transition"
+        elif mode == "basics" or (mode == "full" and step < basic_steps):
             stage = "basics"
         elif mode == "full":
             step, iterations = step - basic_steps, iterations - basic_steps
@@ -155,10 +157,10 @@ def curriculum_values(step: int, iterations: int, config: dict) -> dict[str, flo
         diversity = min(1.0, max(0.0, (progress - combination_start) / min(widen_fraction, 1 - combination_start)))
         values.update(
             curriculum_stage=stage,
-            genome_span=0.0 if stage == "basics" else span,
-            background_span=0.0 if stage == "basics" else span * diversity,
-            style_random_fraction=0.0 if stage == "basics" else diversity,
-            neutral_fraction=1.0 if stage == "basics" else neutral_fraction,
+            genome_span=0.0 if stage in {"basics", "transition"} else span,
+            background_span=0.0 if stage in {"basics", "transition"} else span * diversity,
+            style_random_fraction=0.0 if stage in {"basics", "transition"} else diversity,
+            neutral_fraction=1.0 if stage in {"basics", "transition"} else neutral_fraction,
             environment_span=0.0,
             interpolation_fraction=0.0,
             mutation_fraction=0.0,
@@ -184,6 +186,24 @@ def curriculum_sampling_options(values: dict, config: dict) -> dict:
         name: values[name]
         for name in ("background_span", "style_random_fraction", "neutral_fraction")
     } | {"style_seeds": family_style_seeds(config)}
+
+
+def sample_transition_destinations(
+    genomes: torch.Tensor, style_seeds: torch.Tensor, size: int, seed: int,
+    *, minimum_branch_voxels: int = 1, minimum_leaf_voxels: int = 1,
+) -> FamilyData:
+    """Change only family identity; preserve the organism's genes and style."""
+    rng = np.random.default_rng(seed)
+    sources = [tree_genome_from_vector(vector, style) for vector, style in zip(genomes.cpu(), style_seeds.cpu().tolist())]
+    destinations = [
+        replace(source, family=str(rng.choice([family for family in TREE_FAMILIES if family != source.family])))
+        for source in sources
+    ]
+    return _pack_family_data(
+        destinations, [EnvironmentSpec()] * len(destinations), ["transition"] * len(destinations),
+        size, genomes.device, minimum_branch_voxels=minimum_branch_voxels,
+        minimum_leaf_voxels=minimum_leaf_voxels,
+    )
 
 
 def sample_family_data(

@@ -9,6 +9,7 @@ from morphovoxel.targets import make_tree_target
 from morphovoxel.validation import (
     ValidationCriteria,
     build_candidate_panel,
+    build_transition_panel,
     build_validation_panel,
     validate_candidate,
     validate_panel,
@@ -60,6 +61,45 @@ def test_default_variation_validation_checks_every_family_at_both_gene_limits():
         environments=(EnvironmentSpec(),), fire_seeds=(1,),
     )
     assert len(disabled) == len(TREE_FAMILIES)
+
+
+def test_transition_validation_keeps_source_state_and_tests_every_direction():
+    panel = build_transition_panel(style_seeds=[0, 970806], fire_seeds=[41], source_steps=2)
+    assert len(panel) == 24
+    assert {(case.source_genome.family, case.genome.family) for case in panel} == {
+        (source, destination) for source in TREE_FAMILIES for destination in TREE_FAMILIES if source != destination
+    }
+    assert all(case.source_genome.style_seed == case.genome.style_seed for case in panel)
+    case = panel[0]
+    layout = StateLayout(4, 1)
+    destination = _target_model(case, layout, TreeGenome.model_size())
+    from dataclasses import replace
+    source = _target_model(replace(case, genome=case.source_genome), layout, TreeGenome.model_size())
+
+    class Switching(_TargetModel):
+        def forward(self, state, genome=None, context=None):
+            assert not torch.is_grad_enabled()
+            if int(genome[0, :4].argmax()) == TREE_FAMILIES.index(case.source_genome.family):
+                self.calls.append("source")
+                return source.template.clone()
+            if self.calls[-1] == "source":
+                torch.testing.assert_close(state, source.template)
+            self.calls.append("destination")
+            return self.template.clone()
+
+    model = Switching(destination.template, genome_size=TreeGenome.model_size(), context_channels=len(ENVIRONMENT_CHANNELS))
+    trial = validate_candidate(model, case, layout=layout, world_size=12, steps=4, recovery_steps=1,
+                               criteria=ValidationCriteria(min_steps=4, min_recovery_steps=1))
+    assert model.calls == ["source"] * 2 + ["destination"] * 5
+    assert trial.accepted and trial.metrics["source_target_iou"] == trial.metrics["target_iou"] == 1
+    assert trial.case.to_dict()["source_steps"] == 2
+
+    # Perfect destination growth cannot hide a failed source organism.
+    source.template.zero_()
+    failed = validate_candidate(model, case, layout=layout, world_size=12, steps=4, recovery_steps=1,
+                                criteria=ValidationCriteria(min_steps=4, min_recovery_steps=1))
+    assert not failed.accepted and failed.score == 0
+    assert "source_target_iou_below_minimum" in failed.failure_reasons
 
 
 class _TargetModel(torch.nn.Module):
