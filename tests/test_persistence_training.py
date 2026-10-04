@@ -2,6 +2,7 @@ import random
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 import pytest
 import torch
 
@@ -231,7 +232,12 @@ def test_periodic_recovery_checkpoint_survives_failure_without_validation_improv
         return original(*args, **kwargs)
     monkeypatch.setattr(trainer, "morphology_loss", interrupted)
     scores = iter((.75, .25, .25))
-    monkeypatch.setattr(trainer, "_validate_persistence", lambda *args, **kwargs: (next(scores), {}))
+    def validate(*args, **kwargs):
+        # Loss breakdowns must already be on disk before long validation starts.
+        assert (tmp_path / "recover/metrics/per_step.csv").is_file()
+        score = next(scores)
+        return score, {"tree": score}
+    monkeypatch.setattr(trainer, "_validate_persistence", validate)
     config = {
         "run_name": "recover", "runs_root": str(tmp_path), "device": "cpu",
         "world_size": 10, "batch_size": 4, "materials": 4, "hidden_channels": 1,
@@ -248,10 +254,24 @@ def test_periodic_recovery_checkpoint_survives_failure_without_validation_improv
     assert {int(value["step"]) for value in payload["optimizer"]["state"].values()} == {4}
     assert payload["scheduler"]["last_epoch"] == 4
     assert payload["validation"] is None  # Never attach an older score to new weights.
+    run = checkpoint.parent.parent
+    logs = pd.read_csv(run / "logs.csv")
+    assert logs.step.tolist() == [1, 2, 3, 4]
+    assert {"loss", "occupancy", "material", "branch_dice", "magnitude"} <= set(logs)
+    pd.testing.assert_frame_equal(logs, pd.read_csv(run / "metrics/per_step.csv"))
     if validation_steps:
         best = torch.load(checkpoint.with_name("best.pt"), map_location="cpu", weights_only=False)
         assert best["step"] == 2
+        assert pd.read_csv(run / "metrics/persistence_validation.csv").step.tolist() == [2, 4]
+    # An older checkpoint can have newer log rows: discard those on resume.
+    pd.concat([logs, logs.tail(1).assign(step=5, loss=999)]).to_csv(run / "logs.csv", index=False)
     monkeypatch.setattr(trainer, "morphology_loss", original)
     train({**config, "resume": str(checkpoint), "iterations": 1}, dimensions=3, conditional=True)
     resumed = torch.load(checkpoint, map_location="cpu", weights_only=False)
     assert resumed["step"] == 5 and resumed["scheduler"]["last_epoch"] == 5
+    resumed_logs = pd.read_csv(run / "logs.csv")
+    assert resumed_logs.step.tolist() == [1, 2, 3, 4, 5]
+    pd.testing.assert_frame_equal(resumed_logs.iloc[:4], logs)
+    assert resumed_logs.loss.iloc[-1] != 999
+    if validation_steps:
+        assert pd.read_csv(run / "metrics/persistence_validation.csv").step.tolist() == [2, 4, 5]

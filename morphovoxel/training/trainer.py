@@ -34,6 +34,12 @@ from .state_pool import StatePool
 LOGGER = logging.getLogger(__name__)
 
 
+def _write_metrics(path: Path, records: list[dict]) -> None:
+    temporary = path.with_suffix(".csv.tmp")
+    pd.DataFrame(records).to_csv(temporary, index=False)
+    temporary.replace(path)
+
+
 def _rng_byte_tensor(value) -> torch.Tensor:
     if isinstance(value, torch.Tensor):
         return value.detach().to(device="cpu", dtype=torch.uint8).contiguous()
@@ -476,6 +482,11 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     })
     write_json(run / "metadata.json", run_metadata)
     records, validation_records = [], []
+    if restored:
+        for rows, path in ((records, run / "logs.csv"), (validation_records, run / "metrics" / "persistence_validation.csv")):
+            if path.exists():
+                saved = pd.read_csv(path)
+                rows.extend(saved[saved["step"] <= start].to_dict("records"))
     accumulation_steps = _gradient_accumulation_steps(config)
     minimum, maximum = _step_range(config.get("rollout_steps"), (16, 32) if dimensions == 2 else (8, 16))
     persistence_value = config.get("persistence_steps", config.get("stability_steps", 0))
@@ -846,6 +857,11 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             **dict(zip(accumulated_components, reported[1:])),
         })
         LOGGER.info("step=%d loss=%.6f", step + 1, reported[0])
+        if (step + 1) % validation_every == 0 or step + 1 == start + iterations:
+            # Make loss terms available while running, including if validation
+            # or a later training update fails. Keep live readers off partial CSVs.
+            _write_metrics(run / "logs.csv", records)
+            _write_metrics(run / "metrics" / "per_step.csv", records)
         if (step + 1) % validation_every == 0:
             # Recovery must not depend on improving the best validation score
             # or on finishing the run (or its potentially lengthy validation).
@@ -993,6 +1009,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                     {"step": step + 1, "genome": name, "persistence_score": score, "worst_genome_persistence_score": worst_score}
                     for name, score in genome_scores.items()
                 )
+            if validation_records:
+                _write_metrics(run / "metrics" / "persistence_validation.csv", validation_records)
             # Strict persistence criteria often tie at zero early in training.
             # Keep the newest tied checkpoint instead of freezing best.pt at
             # the first validation window.
@@ -1019,10 +1037,6 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         genomes=({"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()} if tree_family else list(MORPHOLOGIES) if conditional else None),
         validation=validation_summary,
     )
-    pd.DataFrame(records).to_csv(run / "logs.csv", index=False)
-    pd.DataFrame(records).to_csv(run / "metrics" / "per_step.csv", index=False)
-    if validation_records:
-        pd.DataFrame(validation_records).to_csv(run / "metrics" / "persistence_validation.csv", index=False)
     assert final_state is not None and final_target is not None and final_materials is not None
     final_np = final_state.detach().cpu().numpy()
     np.save(run / "rollouts" / "final_state.npy", final_np)
