@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from functools import lru_cache
+import logging
 
 import numpy as np
 import torch
@@ -12,6 +13,9 @@ from ..environment import EnvironmentSpec, make_environment_context
 from ..genomes import FAMILY_GENE_NAMES, TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome, tree_genome_from_vector, tree_genome_tensor
 from ..targets import make_tree_target
 from .losses import _distance_field
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=32)
@@ -178,6 +182,21 @@ def family_style_seeds(config: dict) -> tuple[int, ...]:
     return tuple(dict.fromkeys(seeds))
 
 
+def validate_family_styles(size: int, config: dict, minimum_branch_voxels: int, minimum_leaf_voxels: int) -> None:
+    """Reject fixed neutral targets that the configured mask limits would exclude."""
+    for family in TREE_FAMILIES:
+        for style in family_style_seeds(config):
+            _, materials, _ = _cached_tree_target(TreeGenome(family=family, style_seed=style), size, EnvironmentSpec())
+            for label, name, minimum in ((2, "branch", minimum_branch_voxels), (3, "leaf", minimum_leaf_voxels)):
+                count = int(np.count_nonzero(materials == label))
+                if 0 < count < minimum:
+                    raise ValueError(
+                        f"{family} style_seed={style} at world_size={size} has {count} {name} voxels, "
+                        f"below minimum_{name}_voxels={minimum}. Choose a larger world, compatible "
+                        "family_style_seeds, or a lower minimum before starting Phase 2."
+                    )
+
+
 def curriculum_sampling_options(values: dict, config: dict) -> dict:
     """Keep initial pool creation and subsequent replacements on the same recipe."""
     if "curriculum_stage" not in values:
@@ -322,15 +341,18 @@ def sample_counterfactual_family_data(
         family = TREE_FAMILIES[condition // len(names)]
         gene_name = names[condition % len(names)]
         neutral = genome_span == 0 or (neutral_fraction > 0 and rng.random() < neutral_fraction)
-        for _ in range(128):
+        for attempt in range(128):
             sample_seed = int(rng.integers(0, 2**31))
             base = TreeGenome.random(sample_seed, family=family, span=0.0 if neutral else background_span, locked=locked)
             if style_seeds is not None and (neutral or rng.random() >= style_random_fraction):
                 base = replace(base, style_seed=int(rng.choice(style_seeds)))
             # Live edits need short and long moves at varied starting values,
             # including late in training when the curriculum spans the full range.
+            # Extreme values can rasterize to undersized masks for every style.
+            # After bounded retries, try interior values without relaxing the
+            # mask minimums or changing the pair's family/controlled gene.
             values = (np.sort(rng.uniform(-genome_span, genome_span, 2))
-                      if random_gene_values and not neutral else (-genome_span, genome_span))
+                      if (random_gene_values or attempt >= 32) and not neutral else (-genome_span, genome_span))
             low = base if neutral else base.with_values({gene_name: float(values[0])})
             high = base if neutral else base.with_values({gene_name: float(values[1])})
             environment = EnvironmentSpec.random(int(rng.integers(0, 2**31)), span=environment_span) if environment_span else EnvironmentSpec()
@@ -351,6 +373,8 @@ def sample_counterfactual_family_data(
                 f"could not generate a {family}/{gene_name} counterfactual pair with minimum "
                 f"branch={minimum_branch_voxels} and leaf={minimum_leaf_voxels} voxel counts"
             )
+        if attempt >= 32 and not neutral and not random_gene_values:
+            LOGGER.info("Using interior %s/%s gene values after rejected endpoint pairs", family, gene_name)
         genomes.extend((low, high))
         targets.extend(pair_targets)
         environments.extend((environment, environment))

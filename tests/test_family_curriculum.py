@@ -98,6 +98,57 @@ def test_counterfactual_samples_enforce_minimum_positive_branch_and_leaf_masks()
         assert bool(((counts == 0) | (counts >= minimum)).all())
 
 
+def test_variation_refresh_recovers_when_conifer_gene_endpoints_have_tiny_masks(caplog):
+    # Actual failure at update 3140 of the 8000-update variation run.
+    config = {"family_curriculum": "variation"}
+    values = curriculum_values(3139, 8000, config)
+    options = dict(
+        genome_span=values["genome_span"], condition_ids=[12],
+        minimum_branch_voxels=8, minimum_leaf_voxels=8,
+        **curriculum_sampling_options(values, config),
+    )
+    with caplog.at_level("INFO"):
+        data = sample_counterfactual_family_data(1, 16, 13181, **options)
+    repeated = sample_counterfactual_family_data(1, 16, 13181, **options)
+    assert "Using interior conifer/branch_length gene values" in caplog.text
+    torch.testing.assert_close(data.model_genomes, repeated.model_genomes)
+    low, high = data.genomes
+    assert low.family == high.family == "conifer" and low.style_seed == high.style_seed
+    assert low.with_values({"branch_length": high.value("branch_length")}) == high
+    assert -values["genome_span"] < low.value("branch_length") < high.value("branch_length") < values["genome_span"]
+    assert data.condition_ids.tolist() == [12, 12] and data.pair_ids.tolist() == [0, 0]
+    torch.testing.assert_close(data.environments[0], data.environments[1])
+    from morphovoxel.targets import make_tree_target
+    for index, genome in enumerate(data.genomes):
+        occupancy, material = make_tree_target(genome, 16, data.environment_specs[index])
+        torch.testing.assert_close(data.target_occupancy[index], torch.from_numpy(occupancy))
+        torch.testing.assert_close(data.target_materials[index], torch.from_numpy(material))
+        for label in (2, 3):
+            count = int((material == label).sum())
+            assert count == 0 or count >= 8
+    # Impossible settings still fail; the fallback must not weaken the minimum.
+    with pytest.raises(RuntimeError, match="minimum branch=8 and leaf=4097"):
+        sample_counterfactual_family_data(1, 16, 13181, **{**options, "minimum_leaf_voxels": 4097})
+
+
+def test_fixed_family_styles_reject_conflicting_limits_before_any_training(tmp_path, monkeypatch):
+    from morphovoxel.training import trainer
+    from morphovoxel.training.family import validate_family_styles
+    # At 12^3, this fixed conifer style always has seven branch voxels; retrying
+    # or switching to it later cannot satisfy the configured eight-voxel minimum.
+    style = {"family_style_seeds": [1941611]}
+    monkeypatch.setattr(trainer, "rollout", lambda *args, **kwargs: pytest.fail("training started before validation"))
+    with pytest.raises(ValueError, match="conifer style_seed=1941611.*7 branch voxels"):
+        train({
+            **style, "family_curriculum": "transition", "model_kind": "tree_family",
+            "runs_root": str(tmp_path), "device": "cpu", "world_size": 12,
+            "batch_size": 2, "minimum_branch_voxels": 8, "minimum_leaf_voxels": 8,
+        }, dimensions=3, conditional=True)
+    validate_family_styles(12, {"family_style_seeds": [0]}, 8, 8)
+    validate_family_styles(12, style, 7, 8)
+    validate_family_styles(16, style, 8, 8)
+
+
 def test_family_replacements_can_preserve_pool_family_balance():
     requested = list(TREE_FAMILIES)
     data = sample_family_data(

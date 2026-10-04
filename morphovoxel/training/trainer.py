@@ -28,7 +28,7 @@ from ..targets.morphology_library import save_target
 from ..utils import create_run_directory, metadata, steps_per_second, write_json, write_live_preview
 from ..validation import ValidationCase, ValidationCriteria, build_candidate_panel, build_gene_transition_panel, build_transition_panel, build_validation_panel, validate_panel
 from .losses import _distance_field, counterfactual_loss, morphology_loss, prepare_morphology_targets
-from .family import curriculum_sampling_options, curriculum_values, family_style_seeds, sample_counterfactual_family_data, sample_transition_destinations
+from .family import curriculum_sampling_options, curriculum_values, family_style_seeds, sample_counterfactual_family_data, sample_transition_destinations, validate_family_styles
 from .state_pool import StatePool
 
 LOGGER = logging.getLogger(__name__)
@@ -522,6 +522,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     minimum_leaf_voxels = int(config.get("minimum_leaf_voxels", 1))
     if minimum_branch_voxels < 0 or minimum_leaf_voxels < 0:
         raise ValueError("minimum branch and leaf voxel counts must be non-negative")
+    if phase_two:
+        validate_family_styles(size, config, minimum_branch_voxels, minimum_leaf_voxels)
     if tree_family and (batch % 2 or pool_size % 2):
         raise ValueError("tree-family counterfactual batch_size and pool_size must be even")
     if restored and restored.get("pool") and not bool(config.get("reset_pool_on_resume", False)):
