@@ -11,12 +11,62 @@ from morphovoxel.rollout import rollout
 from morphovoxel.state import StateLayout
 from morphovoxel.targets import make_tree_target
 from morphovoxel.training.family import family_style_seeds
-from morphovoxel.training.losses import morphology_loss, prepare_morphology_targets
+from morphovoxel.training.losses import _soft_overlap, morphology_loss, prepare_morphology_targets
 
 
 DEVICES = ["cpu", pytest.param("mps", marks=pytest.mark.skipif(
     not torch.backends.mps.is_available(), reason="Apple GPU unavailable",
 ))]
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_overlap_handles_mixed_empty_and_present_targets_with_useful_gradients(device):
+    prediction = torch.tensor([[.2, .1], [.25, .75], [0., 0.]], device=device, requires_grad=True)
+    target = torch.tensor([[0., 0.], [0., 1.], [0., 0.]], device=device)
+    dice, iou = _soft_overlap(prediction, target)
+    intersection = prediction[1, 1]
+    expected_dice = (1 - (2 * intersection + 1e-6) / (prediction[1].sum() + 1 + 1e-6) + .15) / 3
+    expected_iou = (1 - (intersection + 1e-6) / (prediction[1].sum() + 1 - intersection + 1e-6) + .15) / 3
+    torch.testing.assert_close(dice, expected_dice)
+    torch.testing.assert_close(iou, expected_iou)
+    (dice + iou).backward()
+    assert torch.isfinite(prediction.grad).all()
+    torch.testing.assert_close(prediction.grad[0], torch.full((2,), 1 / 3, device=device))
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("size", [4, 16])
+def test_absent_tree_material_penalizes_false_material_fraction_not_grid_size(device, size):
+    layout = StateLayout(4, 1)
+    target = torch.zeros(1, size, size, size, device=device)
+    target[:, 1:3, 1, 1] = 1
+    material = target.long()  # Trunk only; no branches or leaves.
+    state = torch.zeros(1, layout.channels, size, size, size, device=device)
+    state[:, 0] = target
+    state[:, layout.material_slice.start + 1] = 8
+    state.requires_grad_()
+    _, terms = morphology_loss(state, target, material, layout)
+    for name in ("trunk_dice", "branch_dice", "leaf_dice"):
+        assert terms[name] < .001
+    (terms["branch_dice"] + terms["leaf_dice"]).backward()
+    for index in (2, 3):
+        assert state.grad[:, layout.material_slice.start + index][target.bool()].min() > 0
+
+    wrong = state.detach().clone()
+    wrong[:, layout.material_slice.start + 2] = 16
+    _, wrong_terms = morphology_loss(wrong, target, material, layout)
+    assert wrong_terms["branch_dice"] > .99
+
+    # Background material labels must not create semantic targets.
+    material[target == 0] = 2
+    prepared = prepare_morphology_targets(target, material)
+    assert not prepared.material_masks[1].any()
+    _, background_terms = morphology_loss(state, target, material, layout, prepared_targets=prepared)
+    torch.testing.assert_close(background_terms["branch_dice"], terms["branch_dice"])
+    empty = torch.zeros_like(target)
+    _, empty_terms = morphology_loss(torch.zeros_like(state), empty, material, layout)
+    for name in ("soft_dice", "soft_iou", "trunk_dice", "branch_dice", "leaf_dice"):
+        assert empty_terms[name] == 0
 
 
 @pytest.mark.parametrize("device", DEVICES)

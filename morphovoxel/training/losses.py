@@ -9,13 +9,20 @@ from torch.nn import functional as F
 from ..state import StateLayout
 
 
-def _soft_overlap(prediction: torch.Tensor, target: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def _soft_overlap(
+    prediction: torch.Tensor, target: torch.Tensor, *, empty_normalizer: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
     prediction, target = prediction.flatten(1), target.flatten(1)
     intersection = (prediction * target).sum(1)
+    prediction_mass, target_mass = prediction.sum(1), target.sum(1)
     epsilon = 1e-6
-    dice = (2 * intersection + epsilon) / (prediction.sum(1) + target.sum(1) + epsilon)
-    iou = (intersection + epsilon) / (prediction.sum(1) + target.sum(1) - intersection + epsilon)
-    return (1 - dice).mean(), (1 - iou).mean()
+    dice = (2 * intersection + epsilon) / (prediction_mass + target_mass + epsilon)
+    iou = (intersection + epsilon) / (prediction_mass + target_mass - intersection + epsilon)
+    # Empty masks have no overlap to learn: ordinary Dice stays near one even
+    # for tiny false positives. Penalize their fraction directly instead.
+    empty_loss = prediction_mass / (prediction.shape[1] if empty_normalizer is None else empty_normalizer.clamp_min(1))
+    present = target_mass > 0
+    return torch.where(present, 1 - dice, empty_loss).mean(), torch.where(present, 1 - iou, empty_loss).mean()
 
 
 def _distance_field(target: torch.Tensor) -> torch.Tensor:
@@ -83,7 +90,7 @@ def prepare_morphology_targets(
         target, foreground,
         foreground.flatten(1).sum(1), (~foreground).flatten(1).sum(1),
         material.masked_fill(~foreground, -100),
-        tuple((material == index).to(target) for index in (1, 2, 3)),
+        tuple(((material == index) & foreground).to(target) for index in (1, 2, 3)),
         coordinates, _shape_descriptors(target, coordinates),
         _distance_field(target) if distance is None else distance.to(target),
     )
@@ -97,11 +104,13 @@ def _shape_components(
     predicted = _shape_descriptors(occupancy, targets.coordinates)
     wanted = targets.descriptors
     material_probabilities = material_logits.softmax(1) * occupancy[:, None]
+    body_mass = occupancy.flatten(1).sum(1)
     semantic_dice = {}
     for name, index in (("trunk_dice", 1), ("branch_dice", 2), ("leaf_dice", 3)):
         if index < material_probabilities.shape[1]:
             semantic_dice[name], _ = _soft_overlap(
                 material_probabilities[:, index], targets.material_masks[index - 1],
+                empty_normalizer=body_mass,
             )
     branch_loss = semantic_dice.get("branch_dice", occupancy.sum() * 0)
     return {
