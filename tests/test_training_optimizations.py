@@ -19,6 +19,32 @@ DEVICES = ["cpu", pytest.param("mps", marks=pytest.mark.skipif(
 ))]
 
 
+@pytest.mark.parametrize("device", DEVICES)
+def test_transition_warmup_skips_mature_sources_and_preserves_pairs(device, monkeypatch):
+    from morphovoxel.training import trainer
+
+    calls = []
+    def grow(model, state, steps, genomes, *, context, shared_fire_pairs):
+        assert not torch.is_grad_enabled() and shared_fire_pairs
+        calls.append((len(state), steps))
+        torch.testing.assert_close(genomes[:, 0], state[:, 0, 0, 0, 0])
+        torch.testing.assert_close(context[:, 0, 0, 0, 0], genomes[:, 0])
+        return state + steps, []
+    monkeypatch.setattr(trainer, "rollout", grow)
+    ages = torch.tensor([0, 0, 3, 3, 8, 8, 12, 12], device=device)
+    state = ages.float().reshape(8, 1, 1, 1, 1).requires_grad_()
+    mature, updated_ages = trainer._mature_transition_sources(
+        None, state, ages[:, None].float(), state, ages, 8, shared_fire_pairs=True,
+    )
+    assert calls == [(2, 5), (2, 8)]  # 26 organism-steps; old whole-batch warmup did 64.
+    torch.testing.assert_close(updated_ages, ages.clamp_min(8))
+    torch.testing.assert_close(mature.flatten(), updated_ages.float())
+    torch.testing.assert_close(state.flatten(), ages.float())
+    assert not mature.requires_grad
+    trainer._mature_transition_sources(None, mature, ages[:, None], state, updated_ages, 8, shared_fire_pairs=True)
+    assert len(calls) == 2
+
+
 def test_default_basic_styles_produce_distinct_trees():
     seeds = family_style_seeds({})
     for family in TREE_FAMILIES:

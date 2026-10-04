@@ -90,6 +90,25 @@ def _gradient_accumulation_steps(config: dict) -> int:
     return value if enabled else 1
 
 
+@torch.no_grad()
+def _mature_transition_sources(model, state, genomes, context, ages, minimum_age, *, shared_fire_pairs=False):
+    """Warm only young sources, preserving pair randomness and exact pool ages."""
+    remaining = (minimum_age - ages.detach().cpu()).clamp_min(0)
+    if shared_fire_pairs and (len(remaining) % 2 or not torch.equal(remaining[::2], remaining[1::2])):
+        raise ValueError("paired transition sources must have matching ages")
+    mature = state.detach().clone() if bool(remaining.any()) else state.detach()
+    for steps in remaining.unique(sorted=True).tolist():
+        if not steps:
+            continue
+        indices = torch.nonzero(remaining == steps, as_tuple=False).flatten().to(state.device)
+        mature[indices], _ = rollout(
+            model, state[indices], steps, genomes[indices],
+            context=context[indices] if context is not None else None,
+            shared_fire_pairs=shared_fire_pairs,
+        )
+    return mature, ages + remaining.to(ages.device)
+
+
 def _training_horizons(
     rollout_range: tuple[int, int],
     persistence_range: tuple[int, int],
@@ -728,11 +747,11 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         # retains its original identity; switched states must not enter it.
         transition_batch = current_stage == "transition" and random.random() >= 0.25
         transition_source = None
-        source_elapsed = 0
         if transition_batch:
-            source_elapsed = max(0, transition_source_steps - int(pool_batch.ages[::2].min()))
-            with torch.no_grad():
-                transition_source, _ = rollout(model, state, source_elapsed, genomes, context=context)
+            transition_source, source_ages = _mature_transition_sources(
+                model, state, genomes, context, pool_batch.ages[::2], transition_source_steps,
+            )
+            pool_batch.ages = source_ages.repeat_interleave(2)
             state = transition_source.detach()
             destination = sample_transition_destinations(
                 genomes, pool_batch.style_seeds[::2], size, seed + 20_000 + micro_step,
@@ -797,7 +816,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         if pool and pool_batch:
             pool_state = transition_source if transition_batch else committed_state
             pool_state = pool_state.detach().repeat_interleave(2, 0) if basic_batch else pool_state
-            pool.commit(pool_batch, pool_state, source_elapsed if transition_batch else steps + persistence_steps)
+            pool.commit(pool_batch, pool_state, 0 if transition_batch else steps + persistence_steps)
         final_state = committed_state
         final_target, final_materials = target, material
         if not optimizer_update:
