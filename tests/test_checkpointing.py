@@ -30,6 +30,29 @@ def test_checkpoint_roundtrip(tmp_path):
     assert all(torch.equal(model.state_dict()[key], value) for key, value in original.items())
 
 
+@pytest.mark.parametrize("existing", [False, True])
+def test_failed_checkpoint_write_preserves_previous_file_and_cleans_temporary(tmp_path, monkeypatch, existing):
+    model = NeuralCA2D(3, 4)
+    checkpoint = tmp_path / "latest.pt"
+    if existing:
+        save_checkpoint(checkpoint, model, step=7)
+    before = checkpoint.read_bytes() if existing else None
+    original = torch.save
+    def interrupted(payload, stream):
+        stream.write(b"incomplete checkpoint")
+        # Concurrent readers must still see the old completed checkpoint.
+        assert (checkpoint.read_bytes() if checkpoint.exists() else None) == before
+        raise OSError("simulated failed write")
+    monkeypatch.setattr(torch, "save", interrupted)
+    with pytest.raises(OSError, match="failed write"):
+        save_checkpoint(checkpoint, model, step=8)
+    assert (checkpoint.read_bytes() if checkpoint.exists() else None) == before
+    assert not list(tmp_path.glob(".*.tmp"))
+    monkeypatch.setattr(torch, "save", original)
+    save_checkpoint(checkpoint, model, step=8)
+    assert load_checkpoint(checkpoint, model)["step"] == 8
+
+
 def test_missing_checkpoint_explains_prerequisite(tmp_path):
     with pytest.raises(FileNotFoundError, match="launch the Full experiment"):
         load_checkpoint(tmp_path / "missing.pt", torch.nn.Linear(2, 2))

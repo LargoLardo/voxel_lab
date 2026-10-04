@@ -216,3 +216,42 @@ def test_conditional_training_updates_best_checkpoint_on_tied_scores(tmp_path, m
     best = torch.load(run / "checkpoints/best.pt", map_location="cpu", weights_only=False)
     assert best["validation"]["validation_steps"] == 5
     assert best["validation"]["best_worst_genome_persistence_score"] == .25
+
+
+@pytest.mark.parametrize("validation_steps", [0, 4])
+def test_periodic_recovery_checkpoint_survives_failure_without_validation_improvement(tmp_path, monkeypatch, validation_steps):
+    from morphovoxel.training import trainer
+    calls = 0
+    original = trainer.morphology_loss
+    def interrupted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 5:
+            raise RuntimeError("simulated failure after update four")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(trainer, "morphology_loss", interrupted)
+    scores = iter((.75, .25, .25))
+    monkeypatch.setattr(trainer, "_validate_persistence", lambda *args, **kwargs: (next(scores), {}))
+    config = {
+        "run_name": "recover", "runs_root": str(tmp_path), "device": "cpu",
+        "world_size": 10, "batch_size": 4, "materials": 4, "hidden_channels": 1,
+        "model_width": 4, "fire_rate": 1.0, "iterations": 5,
+        "rollout_steps": 1, "pool_size": 4, "validation_steps": validation_steps,
+        "validation_every": 2, "scheduler": {"step_size": 2, "gamma": .9},
+    }
+    with pytest.raises(RuntimeError, match="simulated failure"):
+        train(config, dimensions=3, conditional=True)
+    checkpoint = tmp_path / "recover/checkpoints/latest.pt"
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    assert payload["step"] == 4
+    assert payload["pool"] is not None and payload["rng"] is not None
+    assert {int(value["step"]) for value in payload["optimizer"]["state"].values()} == {4}
+    assert payload["scheduler"]["last_epoch"] == 4
+    assert payload["validation"] is None  # Never attach an older score to new weights.
+    if validation_steps:
+        best = torch.load(checkpoint.with_name("best.pt"), map_location="cpu", weights_only=False)
+        assert best["step"] == 2
+    monkeypatch.setattr(trainer, "morphology_loss", original)
+    train({**config, "resume": str(checkpoint), "iterations": 1}, dimensions=3, conditional=True)
+    resumed = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    assert resumed["step"] == 5 and resumed["scheduler"]["last_epoch"] == 5

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import random
+import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -218,7 +219,17 @@ def save_checkpoint(
             "mps": torch.mps.get_rng_state() if torch.backends.mps.is_available() else None,
         },
     }
-    torch.save(payload, path)
+    # Readers see a complete checkpoint, and a failed save leaves the previous
+    # recovery point intact. The temporary file must share its filesystem.
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            torch.save(payload, stream)
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _legacy_metadata(payload: Mapping[str, Any], model: torch.nn.Module) -> dict[str, Any]:

@@ -846,6 +846,14 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             **dict(zip(accumulated_components, reported[1:])),
         })
         LOGGER.info("step=%d loss=%.6f", step + 1, reported[0])
+        if (step + 1) % validation_every == 0:
+            # Recovery must not depend on improving the best validation score
+            # or on finishing the run (or its potentially lengthy validation).
+            save_checkpoint(
+                run / "checkpoints" / "latest.pt", model, optimizer, step=step + 1,
+                scheduler=scheduler, config=config, pool=pool,
+                genomes=({"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()} if tree_family else list(MORPHOLOGIES) if conditional else None),
+            )
         basics_complete = current_stage == "basics" and (
             step + 1 == start + iterations or curriculum_values(step + 1 - curriculum_start, curriculum_iterations, config)["curriculum_stage"] != "basics"
         )
