@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from morphovoxel.checkpointing import CheckpointCompatibilityError, save_checkpoint
-from morphovoxel.genomes import TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome
+from morphovoxel.genomes import FAMILY_GENE_NAMES, TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome
 from morphovoxel.model_3d import NeuralCA3D
 from morphovoxel.state import StateLayout
 from morphovoxel.targets.targets_3d import TREE_TARGET_VERSION
@@ -19,6 +19,32 @@ def test_family_curriculum_widens_before_environment_randomization():
     assert early["genome_span"] < late["genome_span"] == 1
     assert early["environment_span"] == 0 < late["environment_span"]
     assert early["mutation_fraction"] == 0 < late["mutation_fraction"]
+
+
+def test_live_gene_pairs_cover_small_and_large_edits_with_one_gene_changed():
+    config = {"family_curriculum": "gene_transition"}
+    early, late = (curriculum_values(step, 100, config) for step in (0, 99))
+    assert early["curriculum_stage"] == late["curriculum_stage"] == "gene_transition"
+    assert early["genome_span"] < late["genome_span"] == 1
+    assert early["background_span"] == early["style_random_fraction"] == 0
+    assert late["background_span"] == late["style_random_fraction"] == 1
+    options = {**curriculum_sampling_options(late, config), "neutral_fraction": 0}
+    first = sample_counterfactual_family_data(32, 12, 41, **options)
+    second = sample_counterfactual_family_data(32, 12, 41, **options)
+    torch.testing.assert_close(first.model_genomes, second.model_genomes)
+    changes = []
+    for index, (low, high) in enumerate(zip(first.genomes[::2], first.genomes[1::2])):
+        name = FAMILY_GENE_NAMES[index % len(FAMILY_GENE_NAMES)]
+        assert low.family == high.family and low.style_seed == high.style_seed
+        assert low.value("light_tropism") == high.value("light_tropism") == 0
+        assert low.value(name) < high.value(name)
+        assert low.with_values({name: high.value(name)}) == high
+        changes.append(high.value(name) - low.value(name))
+    assert min(changes) < .25 and max(changes) > 1
+    torch.testing.assert_close(first.environments[::2], first.environments[1::2])
+    neutral = sample_counterfactual_family_data(2, 12, 41, **{**options, "neutral_fraction": 1})
+    assert not neutral.model_genomes[:, 4:13].any()
+    torch.testing.assert_close(neutral.target_occupancy[::2], neutral.target_occupancy[1::2])
 
 
 def test_family_samples_keep_genome_target_environment_and_seed_paired():
@@ -218,7 +244,8 @@ def test_phase_two_rejects_invalid_schedules(override):
 @pytest.mark.parametrize("device", ["cpu", pytest.param("mps", marks=pytest.mark.skipif(
     not torch.backends.mps.is_available(), reason="Apple GPU unavailable",
 ))])
-def test_transition_training_changes_family_with_gradients_but_preserves_source_pool(tmp_path, monkeypatch, device):
+@pytest.mark.parametrize("mode", ["transition", "gene_transition"])
+def test_transition_training_switches_with_gradients_but_preserves_source_pool(tmp_path, monkeypatch, device, mode):
     from morphovoxel.training import trainer
     from morphovoxel.training.family import sample_transition_destinations
     from morphovoxel.genomes import tree_genome_tensor
@@ -229,16 +256,30 @@ def test_transition_training_changes_family_with_gradients_but_preserves_source_
     assert all(genome.genes == pytest.approx(source.genes) and genome.style_seed == source.style_seed for genome in destinations.genomes)
 
     calls = []
+    sampled_indices = []
+    original_sample = StatePool.sample_stratified_pairs
+    def observed_sample(pool, *args, **kwargs):
+        batch = original_sample(pool, *args, **kwargs)
+        sampled_indices.append(batch.indices.cpu().clone())
+        return batch
+    monkeypatch.setattr(StatePool, "sample_stratified_pairs", observed_sample)
     original = trainer.rollout
     def observed(model, state, steps, genome=None, *args, **kwargs):
         result = original(model, state, steps, genome, *args, **kwargs)
         calls.append((torch.is_grad_enabled(), steps, genome.detach().cpu().clone(), state.detach().cpu().clone(), result[0].detach().cpu().clone()))
         return result
     monkeypatch.setattr(trainer, "rollout", observed)
+    losses = []
+    original_loss = trainer.morphology_loss
+    def observed_loss(state, target, material, *args, **kwargs):
+        losses.append((target.detach().cpu().clone(), material.detach().cpu().clone(),
+                       kwargs["prepared_targets"].distance.detach().cpu().clone()))
+        return original_loss(state, target, material, *args, **kwargs)
+    monkeypatch.setattr(trainer, "morphology_loss", observed_loss)
     monkeypatch.setattr(trainer.random, "random", lambda: .5)  # Exercise a switched batch.
     config = {
         "run_name": "transition", "runs_root": str(tmp_path), "model_kind": "tree_family",
-        "family_curriculum": "transition", "device": device, "world_size": 12,
+        "family_curriculum": mode, "device": device, "world_size": 12,
         "batch_size": 8, "pool_size": 64, "materials": 4, "hidden_channels": 1,
         "hidden_layers": [4, 4], "fire_rate": 1, "iterations": 1,
         "transition_source_steps": 2, "rollout_steps": 1, "persistence_steps": 1,
@@ -248,19 +289,32 @@ def test_transition_training_changes_family_with_gradients_but_preserves_source_
     warmup, switched, persistence = calls[:3]
     assert not warmup[0] and warmup[1] == 2
     assert switched[0] and persistence[0]
-    assert (warmup[2][:, :4].argmax(1) != switched[2][:, :4].argmax(1)).all()
-    torch.testing.assert_close(warmup[2][:, 4:], switched[2][:, 4:])
+    if mode == "transition":
+        assert (warmup[2][:, :4].argmax(1) != switched[2][:, :4].argmax(1)).all()
+        torch.testing.assert_close(warmup[2][:, 4:], switched[2][:, 4:])
+    else:
+        torch.testing.assert_close(warmup[2][:, :4], switched[2][:, :4])
+        assert (warmup[2][:, 4:13] != switched[2][:, 4:13]).any()
+        torch.testing.assert_close(warmup[2][torch.arange(8) ^ 1], switched[2])
     torch.testing.assert_close(warmup[4], switched[3])
     payload = torch.load(run / "checkpoints/latest.pt", map_location="cpu", weights_only=False)
     pool = StatePool(**payload["pool"])
-    selected = pool.sample_stratified_pairs(8, 0)
-    torch.testing.assert_close(selected.genomes[::2], warmup[2])
-    torch.testing.assert_close(selected.states[::2], warmup[4])
+    selected = pool._batch(sampled_indices[0], "cpu")
+    stride = 2 if mode == "transition" else 1
+    torch.testing.assert_close(selected.genomes[::stride], warmup[2])
+    torch.testing.assert_close(selected.states[::stride], warmup[4])
+    if mode == "gene_transition":
+        for values, expected in zip(losses[0], (selected.target_occupancy, selected.target_materials, selected.target_distances)):
+            torch.testing.assert_close(values, expected[torch.arange(8) ^ 1])
     assert selected.ages.eq(2).all()
     assert any(value["exp_avg"].abs().sum() > 0 for value in payload["optimizer"]["state"].values())
-    # True resume retains the transition curriculum and its source pool.
+    # True resume retains the curriculum and source pool; ordinary rehearsal
+    # still backpropagates from the original genome with no transition warmup.
+    calls.clear()
+    monkeypatch.setattr(trainer.random, "random", lambda: 0)
     resumed = train({**config, "run_name": "resumed", "resume": str(run / "checkpoints/latest.pt")}, dimensions=3, conditional=True)
     assert torch.load(resumed / "checkpoints/latest.pt", map_location="cpu", weights_only=False)["step"] == 2
+    assert calls[0][0] and calls[0][1] == 1
 
 
 @pytest.mark.parametrize("device", [
@@ -283,7 +337,7 @@ def test_phase_two_checkpoint_handoffs_and_full_curriculum_validation(tmp_path, 
         "validation_mutation_count": 0, "validation_boundary_genes": [],
     }
     source = specialist
-    for mode in ("transition", "basics", "variation", "transition", "basics", "full"):
+    for mode in ("gene_transition", "basics", "variation", "gene_transition", "transition", "basics", "full"):
         run = train({
             **config, "run_name": f"from_{source.parent.name}_{mode}", "family_curriculum": mode,
             "transition_source_steps": 2,
@@ -306,12 +360,13 @@ def test_phase_two_checkpoint_handoffs_and_full_curriculum_validation(tmp_path, 
             assert all(not any(case["genome"]["genes"].values()) for case in panel)
         best = torch.load(run / "checkpoints" / "best.pt", map_location="cpu", weights_only=False)
         assert best["validation"]["curriculum_stage"] == ("variation" if mode == "full" else mode)
-        if mode == "transition":
+        if mode in {"transition", "gene_transition"}:
             validation = pd.read_csv(run / "metrics" / "persistence_validation.csv")
-            assert len(validation) == 24
-            assert (validation.source_family != validation.family).all()
+            assert len(validation) == (24 if mode == "transition" else 128)
+            assert ((validation.source_family != validation.family) == (mode == "transition")).all()
             assert "metric_source_target_iou" in validation
-            assert "counterfactual" not in logs
+            assert "metric_transition_edit_accuracy" in validation
+            assert ("counterfactual" in logs) == (mode == "gene_transition")
             assert "transition_fraction" in logs
             assert (run / "rollouts" / "transition.json").is_file()
     # A true resume continues the full curriculum's variation phase, even with a

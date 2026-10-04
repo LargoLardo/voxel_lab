@@ -3,12 +3,13 @@ import pytest
 import torch
 
 from morphovoxel.environment import ENVIRONMENT_CHANNELS, EnvironmentSpec
-from morphovoxel.genomes import TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome
+from morphovoxel.genomes import FAMILY_GENE_NAMES, TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome
 from morphovoxel.state import StateLayout
 from morphovoxel.targets import make_tree_target
 from morphovoxel.validation import (
     ValidationCriteria,
     build_candidate_panel,
+    build_gene_transition_panel,
     build_transition_panel,
     build_validation_panel,
     validate_candidate,
@@ -100,6 +101,62 @@ def test_transition_validation_keeps_source_state_and_tests_every_direction():
                                 criteria=ValidationCriteria(min_steps=4, min_recovery_steps=1))
     assert not failed.accepted and failed.score == 0
     assert "source_target_iou_below_minimum" in failed.failure_reasons
+
+
+def test_gene_transition_panel_covers_every_gene_both_directions_and_edit_sizes():
+    options = dict(style_seeds=[0, 970806, 1941611, 2912417], fire_seeds=[41, 42], source_steps=2)
+    panel = build_gene_transition_panel(**options)
+    assert panel == build_gene_transition_panel(**options)
+    assert len(panel) == len({case.case_id for case in panel}) == 128
+    assert {case.fire_seed for case in panel} == {41, 42}
+    assert {case.genome.style_seed for case in panel} == set(options["style_seeds"])
+    edits = set()
+    for forward, reverse in zip(panel[::2], panel[1::2]):
+        assert forward.genome == reverse.source_genome and forward.source_genome == reverse.genome
+        assert forward.fire_seed == reverse.fire_seed
+        for case in (forward, reverse):
+            assert case.genome.family == case.source_genome.family
+            assert case.genome.style_seed == case.source_genome.style_seed
+            changed = [spec.name for spec in TREE_GENE_SPECS if case.genome.value(spec.name) != case.source_genome.value(spec.name)]
+            assert len(changed) == 1 and changed[0] in FAMILY_GENE_NAMES
+            edits.add((case.genome.family, changed[0], case.genome.value(changed[0])))
+    assert edits == {(family, gene, value) for family in TREE_FAMILIES for gene in FAMILY_GENE_NAMES for value in (-.75, -.25, .25, .75)}
+
+
+def test_gene_validation_rejects_ignored_small_edits_despite_high_whole_tree_iou():
+    from dataclasses import replace
+    case = next(case for case in build_gene_transition_panel(style_seeds=[0], fire_seeds=[41], source_steps=2)
+                if case.genome.family == "branching" and case.genome.value("canopy_spread") == .25)
+    layout = StateLayout(4, 1)
+    source = _target_model(replace(case, genome=case.source_genome), layout, TreeGenome.model_size())
+    destination = _target_model(case, layout, TreeGenome.model_size())
+
+    class IgnoresLiveEdits(_TargetModel):
+        def forward(self, state, genome=None, context=None):
+            # Each genome grows perfectly from a seed. Once grown, keep the old
+            # body's identity even when its gene input changes.
+            identity = float(state[0, layout.hidden_slice.start].max()) or (1 if genome[0, 9] < 0 else 2)
+            result = (source.template if identity == 1 else self.template).clone()
+            result[:, layout.hidden_slice.start] = identity
+            return result
+
+    model = IgnoresLiveEdits(destination.template, genome_size=TreeGenome.model_size(), context_channels=len(ENVIRONMENT_CHANNELS))
+    criteria = ValidationCriteria(min_steps=4, min_recovery_steps=1)
+    trial = validate_candidate(model, case, layout=layout, world_size=12, steps=4, recovery_steps=1, criteria=criteria)
+    assert trial.metrics["target_iou"] > .8 and trial.metrics["source_target_iou"] == 1
+    assert trial.metrics["transition_edited_voxels"] > 0
+    assert trial.metrics["transition_edit_accuracy"] == 0
+    assert not trial.accepted and trial.score == 0
+    assert "transition_edits_below_minimum" in trial.failure_reasons
+    for genome in (case.source_genome, case.genome):
+        fixed = replace(case, genome=genome, source_genome=None, source_steps=0)
+        assert validate_candidate(model, fixed, layout=layout, world_size=12, steps=4, recovery_steps=1, criteria=criteria).accepted
+
+    # Identical rasterized targets are persistence checks, not evidence of edits.
+    unchanged = replace(case, genome=case.source_genome)
+    trial = validate_candidate(source, unchanged, layout=layout, world_size=12, steps=4, recovery_steps=1, criteria=criteria)
+    assert trial.accepted and trial.metrics["transition_edited_voxels"] == 0
+    assert "transition_edit_accuracy" not in trial.metrics
 
 
 class _TargetModel(torch.nn.Module):

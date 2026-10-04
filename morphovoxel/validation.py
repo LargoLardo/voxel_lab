@@ -10,7 +10,7 @@ import torch
 
 from .damage import damage_3d
 from .environment import ENVIRONMENT_CHANNELS, EnvironmentSpec, environment_context_batch
-from .genomes import TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome, tree_genome_tensor
+from .genomes import FAMILY_GENE_NAMES, TREE_FAMILIES, TREE_GENE_SPECS, TreeGenome, tree_genome_tensor
 from .metrics import connected_components, material_accuracy, morphology_metrics, recovery_metrics, threshold_iou
 from .random_utils import fork_rng
 from .rollout import rollout
@@ -38,6 +38,7 @@ class ValidationCriteria:
     min_descriptor_agreement: float = 0.5
     max_late_drift: float = 0.25
     min_regeneration_score: float = 0.5
+    min_transition_edit_accuracy: float = 0.5
 
     def __post_init__(self) -> None:
         if self.min_steps < 1 or self.min_recovery_steps < 1 or self.state_limit <= 0 or self.occupancy_epsilon < 0:
@@ -50,6 +51,7 @@ class ValidationCriteria:
             self.min_descriptor_agreement,
             self.max_late_drift,
             self.min_regeneration_score,
+            self.min_transition_edit_accuracy,
         )
         if any(not math.isfinite(value) or not 0 <= value <= 1 for value in unit_values):
             raise ValueError("validation fractions must be finite and within [0, 1]")
@@ -316,6 +318,31 @@ def build_transition_panel(
     )
 
 
+def build_gene_transition_panel(
+    *, style_seeds: Sequence[int], fire_seeds: Sequence[int], source_steps: int = 128,
+) -> tuple[ValidationCase, ...]:
+    """Test both directions of small/large edits to every Phase 2 gene (128 cases).
+
+    Distribute styles and fire seeds across cases instead of multiplying the
+    panel by every combination; each reverse pair uses the same seeds.
+    """
+    if not style_seeds or not fire_seeds:
+        raise ValueError("gene transition validation requires style and fire seeds")
+    cases = []
+    for family_index, family in enumerate(TREE_FAMILIES):
+        for gene_index, name in enumerate(FAMILY_GENE_NAMES):
+            for magnitude_index, magnitude in enumerate((0.25, 0.75)):
+                index = (family_index * len(FAMILY_GENE_NAMES) + gene_index) * 2 + magnitude_index
+                base = TreeGenome(family=family, style_seed=style_seeds[index % len(style_seeds)])
+                low, high = (base.with_values({name: value}) for value in (-magnitude, magnitude))
+                for direction, source, destination in (("increase", low, high), ("decrease", high, low)):
+                    cases.append(ValidationCase(
+                        f"gene-transition-{family}-{name}-{magnitude}-{direction}", "gene_transition",
+                        destination, EnvironmentSpec(), fire_seeds[index % len(fire_seeds)], source, source_steps,
+                    ))
+    return tuple(cases)
+
+
 def _model_inputs(model, case: ValidationCase, size: int, device: torch.device) -> tuple[torch.Tensor | None, torch.Tensor | None]:
     genome_size = int(getattr(model, "genome_size", 0))
     if genome_size not in (0, TreeGenome.model_size()):
@@ -429,7 +456,7 @@ def validate_candidate(
                 source_genome = tree_genome_tensor((case.source_genome,), device=run_device)
                 state, _ = rollout(model, state, case.source_steps, source_genome, context=context)
                 source_state = state
-                source_target, _ = make_tree_target(case.source_genome, world_size, case.environment)
+                source_target, source_material = make_tree_target(case.source_genome, world_size, case.environment)
                 source_iou = threshold_iou(state[0, layout.occupancy], torch.as_tensor(source_target, device=run_device))
             mature, _ = rollout(model, state, mature_steps, genome, context=context)
             final, _ = rollout(model, mature, late_steps, genome, context=context) if bool(torch.isfinite(mature).all()) else (mature, [])
@@ -488,6 +515,21 @@ def validate_candidate(
     if source_iou is not None:
         metrics["source_target_iou"] = source_iou
         metrics["transition_initial_target_iou"] = threshold_iou(source_state[0, layout.occupancy], target)
+        # Whole-tree IoU can hide an ignored slider edit when most voxels stay
+        # unchanged. Score only the occupancy/material changes it calls for.
+        source_mask, target_mask = source_target > 0.5, target_np > 0.5
+        edited = torch.as_tensor(
+            (source_mask != target_mask) | (source_mask & target_mask & (source_material != target_material_np)),
+            device=run_device,
+        )
+        edited_count = int(edited.sum())
+        metrics["transition_edited_voxels"] = float(edited_count)
+        if edited_count:
+            correct = ((occupancy > 0.5) == (target > 0.5)) & ((target <= 0.5) | (predicted_materials == target_material))
+            edit_accuracy = float(correct[edited].float().mean())
+            metrics["transition_edit_accuracy"] = edit_accuracy
+            if edit_accuracy < criteria.min_transition_edit_accuracy:
+                failures.append("transition_edits_below_minimum")
         if source_iou < criteria.min_target_iou:
             failures.append("source_target_iou_below_minimum")
     if steps < criteria.min_steps:
@@ -514,6 +556,8 @@ def validate_candidate(
     )
     if source_iou is not None:
         score_parts += (source_iou,)
+        if "transition_edit_accuracy" in metrics:
+            score_parts += (metrics["transition_edit_accuracy"],)
     score = min(score_parts) if validated else 0.0
     return ValidationTrial(case, steps, recovery_steps, validated, not failures, float(np.clip(score, 0, 1)), tuple(failures), metrics, descriptors)
 

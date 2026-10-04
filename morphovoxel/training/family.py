@@ -116,16 +116,16 @@ def curriculum_values(step: int, iterations: int, config: dict) -> dict[str, flo
     mode = config.get("family_curriculum")
     stage = "variation"
     if mode is not None:
-        if mode not in {"full", "basics", "variation", "transition"}:
-            raise ValueError("family_curriculum must be full, basics, variation, or transition")
+        if mode not in {"full", "basics", "variation", "transition", "gene_transition"}:
+            raise ValueError("family_curriculum must be full, basics, variation, transition, or gene_transition")
         fraction = float(config.get("basic_family_fraction", 0.25))
         if not 0 < fraction < 1:
             raise ValueError("basic_family_fraction must be between zero and one")
         if mode == "full" and iterations < 2:
             raise ValueError("the full family curriculum requires at least two iterations")
         basic_steps = min(iterations - 1, max(1, int(iterations * fraction))) if mode == "full" else 0
-        if mode == "transition":
-            stage = "transition"
+        if mode in {"transition", "gene_transition"}:
+            stage = mode
         elif mode == "basics" or (mode == "full" and step < basic_steps):
             stage = "basics"
         elif mode == "full":
@@ -185,7 +185,7 @@ def curriculum_sampling_options(values: dict, config: dict) -> dict:
     return {
         name: values[name]
         for name in ("background_span", "style_random_fraction", "neutral_fraction")
-    } | {"style_seeds": family_style_seeds(config)}
+    } | {"style_seeds": family_style_seeds(config), "random_gene_values": values["curriculum_stage"] == "gene_transition"}
 
 
 def sample_transition_destinations(
@@ -285,6 +285,7 @@ def sample_counterfactual_family_data(
     style_seeds: Sequence[int] | None = None,
     style_random_fraction: float = 1.0,
     neutral_fraction: float = 0.0,
+    random_gene_values: bool = False,
     environment_span: float = 0.0,
     active_gene_names: Sequence[str] = FAMILY_GENE_NAMES,
     condition_ids: Sequence[int] | None = None,
@@ -326,8 +327,12 @@ def sample_counterfactual_family_data(
             base = TreeGenome.random(sample_seed, family=family, span=0.0 if neutral else background_span, locked=locked)
             if style_seeds is not None and (neutral or rng.random() >= style_random_fraction):
                 base = replace(base, style_seed=int(rng.choice(style_seeds)))
-            low = base if neutral else base.with_values({gene_name: -genome_span})
-            high = base if neutral else base.with_values({gene_name: genome_span})
+            # Live edits need short and long moves at varied starting values,
+            # including late in training when the curriculum spans the full range.
+            values = (np.sort(rng.uniform(-genome_span, genome_span, 2))
+                      if random_gene_values and not neutral else (-genome_span, genome_span))
+            low = base if neutral else base.with_values({gene_name: float(values[0])})
+            high = base if neutral else base.with_values({gene_name: float(values[1])})
             environment = EnvironmentSpec.random(int(rng.integers(0, 2**31)), span=environment_span) if environment_span else EnvironmentSpec()
             low_target = _cached_tree_target(low, size, environment)
             pair_targets = (low_target, low_target if neutral else _cached_tree_target(high, size, environment))

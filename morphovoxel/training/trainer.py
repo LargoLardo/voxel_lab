@@ -26,7 +26,7 @@ from ..targets import make_target_2d, make_target_3d, make_tree_target
 from ..targets.targets_3d import TREE_TARGET_VERSION
 from ..targets.morphology_library import save_target
 from ..utils import create_run_directory, metadata, steps_per_second, write_json, write_live_preview
-from ..validation import ValidationCase, ValidationCriteria, build_candidate_panel, build_transition_panel, build_validation_panel, validate_panel
+from ..validation import ValidationCase, ValidationCriteria, build_candidate_panel, build_gene_transition_panel, build_transition_panel, build_validation_panel, validate_panel
 from .losses import _distance_field, counterfactual_loss, morphology_loss, prepare_morphology_targets
 from .family import curriculum_sampling_options, curriculum_values, family_style_seeds, sample_counterfactual_family_data, sample_transition_destinations
 from .state_pool import StatePool
@@ -367,7 +367,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             },
         )
         config.setdefault("validation_panel", {
-            "categories": (["transition"] if config.get("family_curriculum") == "transition"
+            "categories": ([config["family_curriculum"]] if config.get("family_curriculum") in {"transition", "gene_transition"}
                            else ["default", "boundary", "random", "interpolation", "mutation", "archive"]),
             "fire_seeds": config.get("validation_fire_seeds", [seed + 100_000, seed + 100_001]),
             "steps": int(config.get("validation_steps", 256)),
@@ -458,7 +458,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         config["family_curriculum_iterations"] = curriculum_iterations
         curriculum_values(start - curriculum_start, curriculum_iterations, config)
     transition_source_steps = config.get("transition_source_steps", 128)
-    if config.get("family_curriculum") == "transition":
+    if config.get("family_curriculum") in {"transition", "gene_transition"}:
         if isinstance(transition_source_steps, bool) or not isinstance(transition_source_steps, int) or transition_source_steps < 1:
             raise ValueError("transition_source_steps must be a positive integer")
     run = create_run_directory(str(config.get("run_name", f"phase{dimensions}d")), config.get("runs_root", "runs"))
@@ -596,7 +596,11 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         }
         old_settings = {key: value for key, value in (incumbent.get("config") or {}).items() if key not in run_options}
         new_settings = {key: value for key, value in config.items() if key not in run_options}
-        if old_settings == new_settings and incumbent.get("validation"):
+        old_validation = incumbent.get("validation") or {}
+        # Older transition scores ignored edited voxels and are not comparable.
+        comparable = (config.get("family_curriculum") not in {"transition", "gene_transition"}
+                      or "min_transition_edit_accuracy" in old_validation.get("persistence_report", {}).get("criteria", {}))
+        if old_settings == new_settings and old_validation and comparable:
             last_validation = incumbent["validation"]
             best_score = float(last_validation.get("best_worst_genome_persistence_score", float("-inf")))
             previous_stage = last_validation.get("curriculum_stage")
@@ -743,23 +747,32 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             distance = distance[::2]
         # Rehearse ordinary growth on 25% of batches, independently of the pool
         # cursor so no family is assigned only rehearsal or only transitions.
-        # The source pool always
-        # retains its original identity; switched states must not enter it.
-        transition_batch = current_stage == "transition" and random.random() >= 0.25
+        # The source pool retains its original identity; switched states must not enter it.
+        transition_batch = current_stage in {"transition", "gene_transition"} and random.random() >= 0.25
         transition_source = None
         if transition_batch:
             transition_source, source_ages = _mature_transition_sources(
-                model, state, genomes, context, pool_batch.ages[::2], transition_source_steps,
+                model, state, genomes, context,
+                pool_batch.ages[::2] if basic_batch else pool_batch.ages, transition_source_steps,
+                shared_fire_pairs=paired_rollout,
             )
-            pool_batch.ages = source_ages.repeat_interleave(2)
+            pool_batch.ages = source_ages.repeat_interleave(2) if basic_batch else source_ages
             state = transition_source.detach()
-            destination = sample_transition_destinations(
-                genomes, pool_batch.style_seeds[::2], size, seed + 20_000 + micro_step,
-                minimum_branch_voxels=minimum_branch_voxels,
-                minimum_leaf_voxels=minimum_leaf_voxels,
-            )
-            genomes = destination.model_genomes
-            target, material, distance = destination.target_occupancy, destination.target_materials, destination.target_distances
+            if current_stage == "gene_transition":
+                # A paired neighbor differs in one gene only. Reuse its prepared
+                # target to teach both edit directions without rebuilding targets.
+                neighbor = torch.arange(len(state), device=device) ^ 1
+                genomes, target, material, distance = (
+                    value[neighbor] for value in (genomes, target, material, distance)
+                )
+            else:
+                destination = sample_transition_destinations(
+                    genomes, pool_batch.style_seeds[::2], size, seed + 20_000 + micro_step,
+                    minimum_branch_voxels=minimum_branch_voxels,
+                    minimum_leaf_voxels=minimum_leaf_voxels,
+                )
+                genomes = destination.model_genomes
+                target, material, distance = destination.target_occupancy, destination.target_materials, destination.target_distances
         prepared_targets = specialist_prepared_targets or prepare_morphology_targets(
             target.to(state), material, distance=distance,
         )
@@ -792,7 +805,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 loss = loss + float(config.get("persistence_weight", 1.0)) * float(
                     config.get("counterfactual_weight", 1.0)
                 ) * persistence_counterfactual
-        if current_stage == "transition":
+        if current_stage in {"transition", "gene_transition"}:
             components["transition_fraction"] = loss.new_tensor(float(transition_batch))
         if preview_started is not None:
             total_steps = steps + persistence_steps
@@ -849,8 +862,9 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                     environments = (environment_default,)
                 if phase_two:
                     environments = (EnvironmentSpec(),)
-                if current_stage == "transition":
-                    panel = build_transition_panel(
+                if current_stage in {"transition", "gene_transition"}:
+                    panel_builder = build_gene_transition_panel if current_stage == "gene_transition" else build_transition_panel
+                    panel = panel_builder(
                         style_seeds=family_style_seeds(config), fire_seeds=fire_seeds,
                         source_steps=transition_source_steps,
                     )
@@ -1017,9 +1031,12 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         capture_genome = None
         capture_context = specialist_context[:1] if specialist_context is not None else None
     with torch.no_grad():
-        if config.get("family_curriculum") == "transition":
+        if config.get("family_curriculum") in {"transition", "gene_transition"}:
             source = TreeGenome(family="branching", style_seed=family_style_seeds(config)[0])
             destination = TreeGenome(family="weeping", style_seed=source.style_seed)
+            if config["family_curriculum"] == "gene_transition":
+                source = source.with_values({"height": -0.75})
+                destination = source.with_values({"height": 0.75})
             capture_context = environment_context_batch([EnvironmentSpec()], size, device=device) if context_channels else None
             capture, frames = rollout(
                 model, capture, transition_source_steps, tree_genome_tensor([source], device=device),
