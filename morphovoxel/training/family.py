@@ -182,9 +182,12 @@ def family_style_seeds(config: dict) -> tuple[int, ...]:
     return tuple(dict.fromkeys(seeds))
 
 
-def validate_family_styles(size: int, config: dict, minimum_branch_voxels: int, minimum_leaf_voxels: int) -> None:
+def validate_family_styles(
+    size: int, config: dict, minimum_branch_voxels: int, minimum_leaf_voxels: int,
+    *, families: Sequence[str] = TREE_FAMILIES,
+) -> None:
     """Reject fixed neutral targets that the configured mask limits would exclude."""
-    for family in TREE_FAMILIES:
+    for family in families:
         for style in family_style_seeds(config):
             _, materials, _ = _cached_tree_target(TreeGenome(family=family, style_seed=style), size, EnvironmentSpec())
             for label, name, minimum in ((2, "branch", minimum_branch_voxels), (3, "leaf", minimum_leaf_voxels)):
@@ -308,6 +311,7 @@ def sample_counterfactual_family_data(
     environment_span: float = 0.0,
     active_gene_names: Sequence[str] = FAMILY_GENE_NAMES,
     condition_ids: Sequence[int] | None = None,
+    families: Sequence[str] = TREE_FAMILIES,
     pair_id_start: int = 0,
     minimum_branch_voxels: int = 1,
     minimum_leaf_voxels: int = 1,
@@ -325,10 +329,13 @@ def sample_counterfactual_family_data(
     names = tuple(active_gene_names)
     if not names or len(set(names)) != len(names) or set(names) - set(specs):
         raise ValueError("active_gene_names must contain unique known genes")
-    total_conditions = len(TREE_FAMILIES) * len(names)
-    chosen = list(condition_ids) if condition_ids is not None else [index % total_conditions for index in range(pair_count)]
-    if len(chosen) != pair_count or any(not 0 <= value < total_conditions for value in chosen):
-        raise ValueError("condition_ids must provide one in-range condition per pair")
+    if not families or len(set(families)) != len(families) or set(families) - set(TREE_FAMILIES):
+        raise ValueError("families must contain unique known tree families")
+    # Keep globally stable condition IDs for checkpoint pools and replacements.
+    conditions = [TREE_FAMILIES.index(family) * len(names) + gene for family in families for gene in range(len(names))]
+    chosen = list(condition_ids) if condition_ids is not None else [conditions[index % len(conditions)] for index in range(pair_count)]
+    if len(chosen) != pair_count or any(value not in conditions for value in chosen):
+        raise ValueError("condition_ids must provide one in-range condition per pair from the selected families")
     rng = np.random.default_rng(seed)
     genomes: list[TreeGenome] = []
     environments: list[EnvironmentSpec] = []

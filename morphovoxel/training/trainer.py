@@ -341,29 +341,50 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         LOGGER.info("Using Apple Metal (MPS): training is seeded, but GPU operations are not guaranteed deterministic.")
     default_kind = "legacy_conditional" if conditional else "specialist"
     model_kind = str(config.get("model_kind", default_kind))
-    if model_kind not in {"specialist", "tree_specialist", "legacy_conditional", "tree_family"}:
-        raise ValueError("model_kind must be specialist, tree_specialist, legacy_conditional, or tree_family")
-    tree_family = model_kind == "tree_family"
+    if model_kind not in {"specialist", "tree_specialist", "legacy_conditional", "tree_family", "tree_gene"}:
+        raise ValueError("model_kind must be specialist, tree_specialist, legacy_conditional, tree_family, or tree_gene")
+    tree_gene = model_kind == "tree_gene"
+    tree_conditioned = model_kind in {"tree_family", "tree_gene"}
+    if tree_gene:
+        config["conditional"] = True
+        config.setdefault("family_curriculum", "variation")
+        if config["family_curriculum"] not in {"variation", "gene_transition"}:
+            raise ValueError("single-tree gene training supports variation or gene_transition only")
+        source_path = config.get("resume") or config.get("initialize_from_checkpoint") or config.get("initialize_from_specialist")
+        if source_path:
+            source_payload = torch.load(source_path, map_location="cpu", weights_only=False)
+            source_config = source_payload.get("config") or {}
+            source_kind = (source_payload.get("metadata") or source_config).get("model_kind")
+            if source_kind not in {"tree_specialist", "tree_gene"}:
+                raise ValueError("single-tree gene training requires a tree_specialist or tree_gene checkpoint")
+            source_genome = TreeGenome.from_dict(source_config.get("tree_genome", {}))
+            requested = TreeGenome.from_dict(config.get("tree_genome", source_genome.to_dict()))
+            if requested.family != source_genome.family:
+                raise ValueError(f"checkpoint specializes in {source_genome.family}; cannot train it as {requested.family}")
+            config.setdefault("tree_genome", source_genome.to_dict())
+            for key in ("hidden_layers", "model_width", "hidden_channels", "materials", "fire_rate", "environment_conditioning"):
+                if key in source_config:
+                    config.setdefault(key, source_config[key])
     tree_specialist = model_kind == "tree_specialist"
     phase_two = config.get("family_curriculum") is not None
     iterations = int(config.get("iterations", 10))
     if phase_two:
-        if not tree_family:
-            raise ValueError("family_curriculum is only valid for tree-family training")
+        if not tree_conditioned:
+            raise ValueError("family_curriculum is only valid for genome-conditioned tree training")
         family_style_seeds(config)
         config["train_light_tropism"] = False
-    train_light_tropism = bool(config.get("train_light_tropism", False)) if tree_family else False
-    if (tree_family or tree_specialist) and dimensions != 3:
+    train_light_tropism = bool(config.get("train_light_tropism", False)) if tree_conditioned else False
+    if (tree_conditioned or tree_specialist) and dimensions != 3:
         raise ValueError("tree models require three dimensions")
     if model_kind == "legacy_conditional" and not conditional:
         raise ValueError("legacy_conditional requires conditional training")
     config.setdefault("model_kind", model_kind)
-    if tree_family or tree_specialist:
+    if tree_conditioned or tree_specialist:
         config.setdefault("genome_schema_version", TREE_GENOME_VERSION)
         config.setdefault("environment_schema_version", ENVIRONMENT_SCHEMA_VERSION)
         config["target_generator"] = {"name": "procedural_tree", "version": TREE_TARGET_VERSION}
         config["target_generator_version"] = TREE_TARGET_VERSION
-    if tree_family:
+    if tree_conditioned:
         config.setdefault(
             "training_genome_ranges",
             {
@@ -378,7 +399,10 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             "fire_seeds": config.get("validation_fire_seeds", [seed + 100_000, seed + 100_001]),
             "steps": int(config.get("validation_steps", 256)),
         })
-    tree_default, environment_default = _tree_settings(config) if tree_family or tree_specialist else (None, None)
+    tree_default, environment_default = _tree_settings(config) if tree_conditioned or tree_specialist else (None, None)
+    trained_families = (tree_default.family,) if tree_gene else TREE_FAMILIES
+    if tree_gene:
+        config["tree_genome"] = tree_default.to_dict()
     if tree_specialist:
         config.setdefault(
             "training_genome_ranges",
@@ -387,9 +411,9 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     size, batch = int(config.get("world_size", 32 if dimensions == 2 else 16)), int(config.get("batch_size", 2 if dimensions == 2 else 1))
     classes = 4 if dimensions == 3 else 3
     layout = StateLayout(materials=int(config.get("materials", classes)), hidden=int(config.get("hidden_channels", 8)))
-    genome_size = TreeGenome.model_size() if tree_family else len(MORPHOLOGIES) if conditional else 0
-    context_channels = len(ENVIRONMENT_CHANNELS) if bool(config.get("environment_conditioning", tree_family)) else 0
-    if tree_family:
+    genome_size = TreeGenome.model_size() if tree_conditioned else len(MORPHOLOGIES) if conditional else 0
+    context_channels = len(ENVIRONMENT_CHANNELS) if bool(config.get("environment_conditioning", tree_conditioned)) else 0
+    if model_kind == "tree_family":
         model = TreeFamilyNCA3D(
             layout.channels, int(config.get("model_width", 32)), genome_size,
             float(config.get("fire_rate", 0.5)), context_channels, len(TREE_FAMILIES),
@@ -409,14 +433,14 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     if sum(bool(config.get(key)) for key in ("resume", "initialize_from_specialist", "initialize_from_checkpoint")) > 1:
         raise ValueError("choose only one of resume, initialize_from_specialist, or initialize_from_checkpoint")
     if weight_source:
-        if not tree_family:
+        if not tree_conditioned:
             raise ValueError("initialize_from_checkpoint is only valid for tree-family training")
         initialize_tree_family(weight_source, model)
         LOGGER.info("Initialized family weights from %s; starting a fresh curriculum and optimizer", weight_source)
     if initialize_from:
-        if not tree_family:
+        if not tree_conditioned:
             raise ValueError("initialize_from_specialist is only valid for tree-family training")
-        source_context_channels = int(config.get("specialist_context_channels", 0))
+        source_context_channels = int(config.get("specialist_context_channels", context_channels if tree_gene else 0))
         source_model = NeuralCA3D(
             layout.channels,
             int(config.get("model_width", 32)),
@@ -449,7 +473,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         )
         start = int(restored["step"])
         _restore_rng_state(restored.get("rng"))
-        if (tree_family or tree_specialist) and restored["metadata"]["target_generator_version"] != TREE_TARGET_VERSION:
+        if (tree_conditioned or tree_specialist) and restored["metadata"]["target_generator_version"] != TREE_TARGET_VERSION:
             config["reset_pool_on_resume"] = True
             LOGGER.info("Rebuilding the training pool for corrected wind targets; keeping model and optimizer state")
         if phase_two and config.get("family_curriculum") != (restored.get("config") or {}).get("family_curriculum"):
@@ -474,9 +498,9 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         "model_kind": model_kind,
         "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
         "checkpoint_format_version": CHECKPOINT_FORMAT_VERSION,
-        "genome_schema_version": TREE_GENOME_VERSION if tree_family or tree_specialist else (1 if conditional else 0),
-        "environment_schema_version": ENVIRONMENT_SCHEMA_VERSION if tree_family or tree_specialist or context_channels else 0,
-        "target_generator_version": TREE_TARGET_VERSION if tree_family or tree_specialist else 0,
+        "genome_schema_version": TREE_GENOME_VERSION if tree_conditioned or tree_specialist else (1 if conditional else 0),
+        "environment_schema_version": ENVIRONMENT_SCHEMA_VERSION if tree_conditioned or tree_specialist or context_channels else 0,
+        "target_generator_version": TREE_TARGET_VERSION if tree_conditioned or tree_specialist else 0,
         "genome_size": genome_size,
         "context_channels": context_channels,
     })
@@ -495,7 +519,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     if isinstance(configured_horizon_limit, bool):
         raise ValueError("differentiable_step_limit must be a positive integer")
     differentiable_step_limit = None if configured_horizon_limit is None else int(configured_horizon_limit)
-    if tree_family:
+    if tree_conditioned:
         _guard_tree_family_cuda_memory(
             device=device, dimensions=dimensions, world_size=size, batch_size=batch,
             rollout_maximum=maximum, persistence_maximum=persistence_maximum,
@@ -517,12 +541,12 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             from ..rendering_3d import projection as preview_image
     pool = None
     configured_pool_size = int(config.get("pool_size", 0))
-    if tree_family:
-        requested_pool_size = configured_pool_size or max(batch, 64)
+    if tree_conditioned:
+        requested_pool_size = configured_pool_size or max(batch, 2 * len(trained_families) * len(FAMILY_GENE_NAMES))
         pool_size = max(requested_pool_size, batch)
         if phase_two:
             # Keep every family/gene condition represented even with a small batch.
-            pool_size = max(pool_size, 2 * len(TREE_FAMILIES) * len(FAMILY_GENE_NAMES))
+            pool_size = max(pool_size, 2 * len(trained_families) * len(FAMILY_GENE_NAMES))
     elif conditional:
         requested_pool_size = configured_pool_size or max(batch, len(MORPHOLOGIES) * 4)
         pool_size = max(requested_pool_size, batch, len(MORPHOLOGIES))
@@ -534,21 +558,21 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     if minimum_branch_voxels < 0 or minimum_leaf_voxels < 0:
         raise ValueError("minimum branch and leaf voxel counts must be non-negative")
     if phase_two:
-        validate_family_styles(size, config, minimum_branch_voxels, minimum_leaf_voxels)
-    if tree_family and (batch % 2 or pool_size % 2):
+        validate_family_styles(size, config, minimum_branch_voxels, minimum_leaf_voxels, families=trained_families)
+    if tree_conditioned and (batch % 2 or pool_size % 2):
         raise ValueError("tree-family counterfactual batch_size and pool_size must be even")
     if restored and restored.get("pool") and not bool(config.get("reset_pool_on_resume", False)):
         pool = _restore_pool(restored["pool"])
     # Generate fresh entries only when the saved pool cannot supply this run.
     initialize_pool = pool is None or len(pool.states) < pool_size
     initialized_pool = None
-    if tree_family and initialize_pool:
+    if tree_conditioned and initialize_pool:
         initial = curriculum_values(start - curriculum_start, curriculum_iterations, config)
         family = sample_counterfactual_family_data(
             pool_size // 2, size, seed,
             genome_span=initial["genome_span"],
             environment_span=initial["environment_span"] if context_channels else 0.0,
-            active_gene_names=active_gene_names,
+            active_gene_names=active_gene_names, families=trained_families,
             **curriculum_sampling_options(initial, config),
             minimum_branch_voxels=minimum_branch_voxels,
             minimum_leaf_voxels=minimum_leaf_voxels,
@@ -580,7 +604,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             pool = initialized_pool
         else:
             pool.append_from(initialized_pool, len(pool.states))
-    if tree_family and any(getattr(pool, name) is None for name in (
+    if tree_conditioned and any(getattr(pool, name) is None for name in (
         "target_occupancy", "target_materials", "environments",
         "environment_specs", "style_seeds", "condition_ids", "pair_ids",
     )):
@@ -588,6 +612,9 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             "tree-family checkpoint pool is missing paired target/environment/style data "
             "or counterfactual pair identity data"
         )
+    if tree_gene and pool is not None:
+        if not bool((pool.genomes[:, :len(TREE_FAMILIES)].argmax(1) == TREE_FAMILIES.index(tree_default.family)).all()):
+            raise ValueError("checkpoint pool contains a different tree family; start a fresh gene curriculum")
     specialist_target = specialist_material = specialist_context = specialist_prepared_targets = None
     if tree_specialist:
         occupancy, materials = make_tree_target(tree_default, size, environment_default)
@@ -618,7 +645,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             best_score = float(last_validation.get("best_worst_genome_persistence_score", float("-inf")))
             previous_stage = last_validation.get("curriculum_stage")
         del incumbent
-    pair_cursor = (start * accumulation_steps * max(1, batch // 2)) if tree_family else 0
+    pair_cursor = (start * accumulation_steps * max(1, batch // 2)) if tree_conditioned else 0
     for micro_step in range(start * accumulation_steps, (start + iterations) * accumulation_steps):
         step = micro_step // accumulation_steps
         accumulation_index = micro_step % accumulation_steps
@@ -627,7 +654,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             optimizer.zero_grad(set_to_none=True)
             accumulated_loss = 0.0
             accumulated_components: dict[str, torch.Tensor] = {}
-        curriculum = curriculum_values(step - curriculum_start, curriculum_iterations, config) if tree_family else {}
+        curriculum = curriculum_values(step - curriculum_start, curriculum_iterations, config) if tree_conditioned else {}
         current_stage = curriculum.get("curriculum_stage")
         if current_stage != previous_stage:
             LOGGER.info("Phase 2 curriculum: %s", current_stage)
@@ -635,14 +662,14 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             best_score, last_validation = float("-inf"), None
             previous_stage = current_stage
         context = None
-        if pool and tree_family:
+        if pool and tree_conditioned:
             pool_batch = pool.sample_stratified_pairs(batch, pair_cursor, device)
             pair_cursor += batch // 2
         else:
             pool_batch = pool.sample(batch, torch.Generator().manual_seed(seed + micro_step), device) if pool else None
         if pool_batch:
             state = pool_batch.states
-            if tree_family:
+            if tree_conditioned:
                 if any(value is None for value in (
                     pool_batch.target_occupancy, pool_batch.target_materials,
                     pool_batch.environments, pool_batch.style_seeds,
@@ -660,7 +687,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 labels = genomes.argmax(1) if conditional else torch.zeros(batch, dtype=torch.long, device=device)
                 target, material = _targets(dimensions, labels, size, seed, conditional, device, config.get("target_kind"))
             fresh_fraction = max(0.0, min(1.0, float(config.get("fresh_fraction", 0.25))))
-            if tree_family:
+            if tree_conditioned:
                 expected_fresh_pairs = batch * fresh_fraction / 2
                 fresh_pairs = int(expected_fresh_pairs) + int(random.random() < expected_fresh_pairs % 1)
                 reseed, damage = _paired_pool_actions(
@@ -676,17 +703,17 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                     int(config.get("damage_min_age", maximum)),
                 )
             if len(reseed):
-                fresh_count = len(reseed) // 2 if tree_family else len(reseed)
+                fresh_count = len(reseed) // 2 if tree_conditioned else len(reseed)
                 fresh_states = seed_state(
                     fresh_count, size, layout, dimensions=dimensions,
                     seed_size=int(config.get("seed_size", 1)), noise=float(config.get("seed_noise", 0)),
                     random_seed=seed + micro_step, device=device,
                 )
-                if tree_family:
+                if tree_conditioned:
                     fresh_states = fresh_states.repeat_interleave(2, 0)
                 state[reseed] = fresh_states
                 pool_batch.ages[reseed] = 0
-                if tree_family:
+                if tree_conditioned:
                     if pool_batch.condition_ids is None or pool_batch.pair_ids is None:
                         raise ValueError("tree-family counterfactual metadata is missing")
                     replacement_conditions = pool_batch.condition_ids[reseed][::2].tolist()
@@ -694,7 +721,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                         len(replacement_conditions), size, seed + 10_000 + micro_step,
                         genome_span=curriculum["genome_span"],
                         environment_span=curriculum["environment_span"] if context_channels else 0.0,
-                        active_gene_names=active_gene_names,
+                        active_gene_names=active_gene_names, families=trained_families,
                         **curriculum_sampling_options(curriculum, config),
                         condition_ids=replacement_conditions,
                         minimum_branch_voxels=minimum_branch_voxels,
@@ -723,7 +750,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                     )
             if len(damage):
                 from ..damage import damage_3d
-                groups = damage.view(-1, 2).tolist() if tree_family else [[index] for index in damage.tolist()]
+                groups = damage.view(-1, 2).tolist() if tree_conditioned else [[index] for index in damage.tolist()]
                 for indices in groups:
                     original = state[indices]
                     damaged, _ = damage_3d(
@@ -732,10 +759,10 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                         random.choice(config.get("damage_types", ["sphere", "cuboid", "top"])),
                         seed + micro_step + indices[0],
                     )
-                    state[indices] = _keep_viable_damage(original, damaged, paired=tree_family)
+                    state[indices] = _keep_viable_damage(original, damaged, paired=tree_conditioned)
         else:
             state = seed_state(batch, size, layout, dimensions=dimensions, seed_size=int(config.get("seed_size", 1)), noise=float(config.get("seed_noise", 0)), random_seed=seed + micro_step, device=device)
-            if tree_family:
+            if tree_conditioned:
                 raise RuntimeError("tree-family training requires its paired state pool")
             if tree_specialist:
                 genomes = None
@@ -754,8 +781,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             state, genomes = state[::2], genomes[::2]
             target, material = target[::2], material[::2]
             context = context[::2] if context is not None else None
-        paired_rollout = tree_family and not basic_batch
-        distance = pool_batch.target_distances if tree_family else None
+        paired_rollout = tree_conditioned and not basic_batch
+        distance = pool_batch.target_distances if tree_conditioned else None
         if basic_batch:
             distance = distance[::2]
         # Rehearse ordinary growth on 25% of batches, independently of the pool
@@ -797,7 +824,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             final_state, target, material, layout, config.get("loss_weights"), state_limit=state_limit,
             prepared_targets=prepared_targets,
         )
-        if tree_family and not basic_batch:
+        if tree_conditioned and not basic_batch:
             components["counterfactual"] = counterfactual_loss(final_state, target, layout)
             loss = loss + float(config.get("counterfactual_weight", 1.0)) * components["counterfactual"]
         committed_state = final_state
@@ -812,7 +839,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             components["persistence"] = persistence_loss
             components.update({f"persistence_{name}": value for name, value in persistence_components.items()})
             loss = loss + float(config.get("persistence_weight", 1.0)) * persistence_loss
-            if tree_family and not basic_batch:
+            if tree_conditioned and not basic_batch:
                 persistence_counterfactual = counterfactual_loss(committed_state, target, layout)
                 components["persistence_counterfactual"] = persistence_counterfactual
                 loss = loss + float(config.get("persistence_weight", 1.0)) * float(
@@ -868,7 +895,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             save_checkpoint(
                 run / "checkpoints" / "latest.pt", model, optimizer, step=step + 1,
                 scheduler=scheduler, config=config, pool=pool,
-                genomes=({"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()} if tree_family else list(MORPHOLOGIES) if conditional else None),
+                genomes=({"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()} if tree_conditioned else list(MORPHOLOGIES) if conditional else None),
             )
         basics_complete = current_stage == "basics" and (
             step + 1 == start + iterations or curriculum_values(step + 1 - curriculum_start, curriculum_iterations, config)["curriculum_stage"] != "basics"
@@ -876,7 +903,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         should_validate = validation_steps > 0 and ((step + 1) % validation_every == 0 or step + 1 == start + iterations or basics_complete)
         if should_validate:
             detailed_validation_rows: list[dict[str, object]] | None = None
-            if tree_family or tree_specialist:
+            if tree_conditioned or tree_specialist:
                 fire_seeds = tuple(map(int, config.get("validation_fire_seeds", [seed + 100_000, seed + 100_001])))
                 environment_values = config.get("validation_environment_specs")
                 environments = (
@@ -926,6 +953,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                             ValidationCase(case.case_id, case.category, case.genome.with_values({"light_tropism": 0.0}), case.environment, case.fire_seed)
                             for case in panel
                         )
+                if tree_gene:
+                    panel = tuple(case for case in panel if case.genome.family == tree_default.family)
                 criteria = ValidationCriteria(
                     min_steps=int(config.get("validation_min_steps", 256)),
                     min_recovery_steps=int(config.get("validation_min_recovery_steps", 64)),
@@ -1020,7 +1049,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 save_checkpoint(
                     run / "checkpoints" / "best.pt", model, optimizer, step=step + 1,
                     scheduler=scheduler, config=config, pool=pool,
-                    genomes=({"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()} if tree_family else list(MORPHOLOGIES) if conditional else None),
+                    genomes=({"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()} if tree_conditioned else list(MORPHOLOGIES) if conditional else None),
                     validation=best_validation,
                 )
             LOGGER.info("validation step=%d worst_genome_persistence=%.6f", step + 1, worst_score)
@@ -1034,7 +1063,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     validation_summary = ({**last_validation, "best_worst_genome_persistence_score": best_score} if last_validation else None)
     save_checkpoint(
         checkpoint, model, optimizer, step=start + iterations, scheduler=scheduler, config=config, pool=pool,
-        genomes=({"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()} if tree_family else list(MORPHOLOGIES) if conditional else None),
+        genomes=({"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()} if tree_conditioned else list(MORPHOLOGIES) if conditional else None),
         validation=validation_summary,
     )
     assert final_state is not None and final_target is not None and final_materials is not None
@@ -1045,7 +1074,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     summary = morphology_metrics(prediction, final_target[0].cpu().numpy())
     pd.DataFrame([summary]).to_csv(run / "metrics" / "summary.csv", index=False)
     capture = seed_state(1, size, layout, dimensions=dimensions, device=device)
-    if tree_family:
+    if tree_conditioned:
         capture_genome = tree_genome_tensor([tree_default], device=device)
         capture_context = environment_context_batch([environment_default], size, device=device) if context_channels else None
     elif conditional:
@@ -1056,7 +1085,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         capture_context = specialist_context[:1] if specialist_context is not None else None
     with torch.no_grad():
         if config.get("family_curriculum") in {"transition", "gene_transition"}:
-            source = TreeGenome(family="branching", style_seed=family_style_seeds(config)[0])
+            source = TreeGenome(family=tree_default.family if tree_gene else "branching", style_seed=family_style_seeds(config)[0])
             destination = TreeGenome(family="weeping", style_seed=source.style_seed)
             if config["family_curriculum"] == "gene_transition":
                 source = source.with_values({"height": -0.75})

@@ -1,0 +1,54 @@
+run_name: tree_genes
+dimensions: 3
+model_kind: tree_gene
+conditional: true
+initialize_from_checkpoint: runs/tree_specialist/checkpoints/best.pt
+# variation or gene_transition, restricted to the checkpoint's tree type.
+family_curriculum: variation
+# Both transition modes grow the source before switching, retaining its voxel state.
+transition_source_steps: 128
+family_style_seeds: [0, 970806, 1941611, 2912417]
+neutral_fraction: 0.25
+combination_start_fraction: 0.25
+seed: 42
+device: auto
+world_size: 16
+batch_size: 8
+# Tree type, hidden layers, state channels, fire rate and environment inputs
+# are inherited from the checkpoint unless explicitly overridden.
+iterations: 8000
+rollout_steps: [24, 48]
+pool_size: 16
+fresh_fraction: 0.25
+learning_rate: 0.0003
+gradient_clip: 1.0
+state_limit: 4.0
+loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 2.0, magnitude: 0.01, soft_dice: 1.0, soft_iou: 0.5, distance: 0.5, height: 0.25, width: 0.25, volume: 0.5, centroid: 0.25, trunk_dice: 0.25, branch_dice: 2.0, leaf_dice: 1.0}
+minimum_branch_voxels: 8
+minimum_leaf_voxels: 8
+counterfactual_weight: 1.0
+# One paired batch per update by default; opt into accumulation for larger
+# effective batches at the cost of more training time per iteration.
+gradient_accumulation: false
+gradient_accumulation_steps: 1
+train_light_tropism: false
+persistence_steps: [16, 32]
+persistence_weight: 1.0
+initial_genome_span: 0.15
+genome_widen_fraction: 0.45
+# Keep this stage focused on genome separation. Environmental variation is
+# outside this curriculum.
+environment_start_fraction: 1.0
+validation_steps: 256
+validation_every: 500
+validation_fire_seeds: [100042, 100043]
+validation_random_count: 2
+validation_interpolation_steps: 2
+validation_mutation_count: 2
+validation_mutation_strength: 0.15
+validation_min_steps: 256
+validation_recovery_steps: 64
+validation_min_recovery_steps: 64
+validation_aggregation: worst
+archive_min_validation_steps: 512
+archive_min_recovery_steps: 128

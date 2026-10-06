@@ -158,6 +158,16 @@ Use a specialist while inventing or stabilizing one organism: it dedicates all m
 
 Ecology can route either one shared checkpoint with different genomes or separate specialist checkpoints by organism. Sharing a world only creates mechanical competition for occupancy and resources. It does not create learned tropism, cooperation, or competition unless the participating model was trained with the corresponding neighbor and resource context; `tree_environment.yaml` is the relevant shared-family stage.
 
+## Single-tree specialists and gene training
+
+The Specialist stage can train branching, conifer, broad-canopy, or weeping trees independently. Choose **Specialist tree type** in the dashboard, or set `tree_genome.family` in `configs/tree_specialist.yaml`.
+
+Use `configs/tree_genes.yaml` to train that specialist's genes directly. Set `initialize_from_checkpoint` to its checkpoint, then choose `family_curriculum: variation` for growth with varied genes or `gene_transition` for live edits to an existing tree. No all-family training or family checkpoint is required. The source checkpoint supplies the tree type, hidden layers, state channels, fire rate, and environment inputs unless explicitly overridden. Hidden layers and state channels must match; changing the tree type is rejected.
+
+This path retains the specialist's single update network, adding initially zero-weight genome inputs so conversion preserves its growth rule. Only that tree type appears in paired training and validation, and its tree type stays locked in the checkpoint viewer while genes and styles remain editable. The default pool has 16 organisms (eight gene pairs), versus 64 for all-family training. The paired losses and live-edit rehearsal are shared with the existing curricula.
+
+Variation and live-gene checkpoints can initialize each other using `initialize_from_checkpoint`, which starts a new optimizer and schedule. Use `resume` only to continue the same curriculum with its saved optimizer, pool, and progress. `tree_family.yaml` retains the all-family curricula and separate family-switch training; single-tree gene checkpoints are not interchangeable with that architecture.
+
 ## Persistence and the Variant Archive
 
 Family training uses stratified low/high counterfactual pairs: seed, style, environment, fire masks, and damage are shared while exactly one gene changes. The loss combines balanced occupancy/material terms with soft Dice/IoU, distance-to-target, height, width, volume, centroid, and separate trunk, branch, and leaf Dice losses. Counterfactual error is normalized over voxels where the paired targets differ, so sparse gene effects are not diluted by world volume. The model uses one shared perception backbone with family-specific FiLM and output heads. Living masks, magnitude/range penalties, gradient clipping, and non-finite checks remain active.

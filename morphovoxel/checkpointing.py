@@ -78,7 +78,7 @@ def _checkpoint_metadata(
     kind = _model_kind(model, config)
     genome_size = int(getattr(model, "genome_size", 0))
     context_channels = int(getattr(model, "context_channels", 0))
-    tree_model = kind in {"tree_specialist", "tree_family"}
+    tree_model = kind in {"tree_specialist", "tree_family", "tree_gene"}
     target_generator = config.get("target_generator")
     if isinstance(target_generator, Mapping):
         target_name = str(target_generator.get("name", "procedural_tree" if tree_model else "unspecified"))
@@ -151,11 +151,11 @@ def _validate_metadata_for_model(metadata: Mapping[str, Any], model: torch.nn.Mo
     context_channels = int(getattr(model, "context_channels", 0))
     genome_version = metadata["genome_schema_version"]
     environment_version = metadata["environment_schema_version"]
-    if kind in {"tree_specialist", "tree_family"} and genome_version != TREE_GENOME_VERSION:
+    if kind in {"tree_specialist", "tree_family", "tree_gene"} and genome_version != TREE_GENOME_VERSION:
         raise CheckpointCompatibilityError(
             f"unsupported tree genome schema version {genome_version}; this build supports {TREE_GENOME_VERSION}"
         )
-    if kind == "tree_family":
+    if kind in {"tree_family", "tree_gene"}:
         if genome_size != TreeGenome.model_size():
             raise CheckpointCompatibilityError(
                 f"tree-family checkpoint requires genome_size={TreeGenome.model_size()}, model has {genome_size}"
@@ -361,8 +361,8 @@ def load_model_payload(
     return metadata, legacy
 
 
-def initialize_tree_family(path: str | Path, model: TreeFamilyNCA3D) -> None:
-    """Transfer specialist or family weights into a fresh training curriculum."""
+def initialize_tree_family(path: str | Path, model: TreeFamilyNCA3D | NeuralCA3D) -> None:
+    """Transfer compatible tree weights into a fresh genome curriculum."""
     payload = torch.load(path, map_location="cpu", weights_only=False)
     if not isinstance(payload, dict):
         raise CheckpointCompatibilityError("initialization checkpoint payload must be a mapping")
@@ -370,18 +370,19 @@ def initialize_tree_family(path: str | Path, model: TreeFamilyNCA3D) -> None:
     if not isinstance(metadata, Mapping):
         raise CheckpointCompatibilityError("initialization checkpoint metadata must be a mapping")
     kind = metadata.get("model_kind")
-    if kind == "tree_family":
+    destination_kind = "tree_family" if isinstance(model, TreeFamilyNCA3D) else "tree_gene"
+    if kind == destination_kind:
         load_model_payload(payload, model, checkpoint_path=path, expected_model_kind=kind)
     elif kind == "tree_specialist":
         source = NeuralCA3D(
-            model.channels, model.shared.out_channels, 0, model.fire_rate,
+            model.channels, model.hidden_layers[0], 0, model.fire_rate,
             int(metadata.get("context_channels", 0)),
             hidden_layers=model.hidden_layers,
         ).to(next(model.parameters()).device)
         load_model_payload(payload, source, checkpoint_path=path, expected_model_kind=kind)
         convert_specialist_to_family(source, model)
     else:
-        raise CheckpointCompatibilityError("initialize_from_checkpoint requires a tree_specialist or tree_family checkpoint")
+        raise CheckpointCompatibilityError(f"initialize_from_checkpoint requires a tree_specialist or {destination_kind} checkpoint")
 
 
 def _verify_specialist_conversion(source: NeuralCA3D, destination: torch.nn.Module) -> None:

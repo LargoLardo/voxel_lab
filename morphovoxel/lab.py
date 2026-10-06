@@ -119,12 +119,12 @@ class LabSession:
         layout = StateLayout(materials, int(config.get("hidden_channels", 8)))
         conditional = bool(config.get("conditional", False))
         model_kind = str(config.get("model_kind", "legacy_conditional" if conditional else "specialist"))
-        continuous = model_kind == "tree_family"
+        continuous = model_kind in {"tree_family", "tree_gene"}
         if continuous and dimensions != 3:
             raise ValueError("continuous tree-family checkpoints require a 3D run")
         genome_size = TreeGenome.model_size() if continuous else len(MORPHOLOGIES) if conditional else 0
         context_channels = len(ENVIRONMENT_CHANNELS) if bool(config.get("environment_conditioning", continuous)) else 0
-        if continuous:
+        if model_kind == "tree_family":
             model = TreeFamilyNCA3D(
                 layout.channels, int(config.get("model_width", 32)), genome_size,
                 float(config.get("fire_rate", 0.5)), context_channels, len(TREE_FAMILIES),
@@ -146,7 +146,7 @@ class LabSession:
             noise=float(config.get("seed_noise", 0)),
             random_seed=int(config.get("seed", 0)), device=device,
         )
-        tree_model = model_kind in {"tree_family", "tree_specialist"}
+        tree_model = model_kind in {"tree_family", "tree_specialist", "tree_gene"}
         tree_genome = TreeGenome.from_dict(config.get("tree_genome", {})) if tree_model else None
         environment = EnvironmentSpec.from_dict(config.get("environment", {})) if tree_model or context_channels else None
         context = environment_context_batch([environment], size, device=device) if context_channels and environment else None
@@ -164,7 +164,7 @@ class LabSession:
 
     @property
     def genome(self) -> torch.Tensor | None:
-        if self.model_kind == "tree_family":
+        if self.model_kind in {"tree_family", "tree_gene"}:
             if self.active_tree_genome is None:
                 raise ValueError("tree-family session has no active genome")
             return tree_genome_tensor([self.active_tree_genome], device=self.device)
@@ -182,7 +182,7 @@ class LabSession:
         }
 
     def _target(self) -> tuple[str, torch.Tensor, torch.Tensor]:
-        if self.model_kind in {"tree_family", "tree_specialist"}:
+        if self.model_kind in {"tree_family", "tree_specialist", "tree_gene"}:
             genome = self.active_tree_genome
             if genome is None:
                 raw = self.config.get("tree_genome", {})
@@ -213,9 +213,10 @@ class LabSession:
             "device": str(self.device), "conditional": self.conditional,
             "model_kind": self.model_kind, "checkpoint": self.checkpoint_name,
             "checkpoint_sha256": self.checkpoint_sha256,
-            "continuous_genome": self.model_kind == "tree_family",
+            "continuous_genome": self.model_kind in {"tree_family", "tree_gene"},
+            "fixed_tree_family": self.active_tree_genome.family if self.model_kind == "tree_gene" else None,
             "trained_light_tropism": bool(self.config.get("train_light_tropism", False)),
-            "genomes": list(MORPHOLOGIES) if self.conditional and self.model_kind != "tree_family" else [],
+            "genomes": list(MORPHOLOGIES) if self.conditional and self.model_kind not in {"tree_family", "tree_gene"} else [],
             "genome": self.genome_index, "steps": self.steps,
             "steps_per_second": self.rate, "occupied_cells": occupied,
             "target_name": target_name, "target_cells": int((target > 0.5).sum().item()),
@@ -267,7 +268,7 @@ class LabSession:
         return self.summary()
 
     def set_genome(self, index: int) -> dict[str, object]:
-        if self.model_kind == "tree_family" or not self.conditional or not 0 <= index < len(MORPHOLOGIES):
+        if self.model_kind in {"tree_family", "tree_gene"} or not self.conditional or not 0 <= index < len(MORPHOLOGIES):
             raise ValueError("genome is unavailable or out of range")
         self.genome_index = index
         self.version += 1
@@ -279,9 +280,11 @@ class LabSession:
             self.target_cache.clear()
 
     def set_tree_genome(self, value: dict[str, object], *, live_remodel: bool = False) -> dict[str, object]:
-        if self.model_kind != "tree_family":
-            raise ValueError("continuous genome controls require a tree-family checkpoint")
+        if self.model_kind not in {"tree_family", "tree_gene"}:
+            raise ValueError("continuous genome controls require a tree-family or single-tree gene checkpoint")
         genome = TreeGenome.from_dict(value)
+        if self.model_kind == "tree_gene" and genome.family != TreeGenome.from_dict(self.config.get("tree_genome", {})).family:
+            raise ValueError("this gene checkpoint only supports its specialist tree type")
         self.pending_tree_genome = genome
         if live_remodel:
             self.active_tree_genome = genome
@@ -292,7 +295,7 @@ class LabSession:
     def randomize_tree_genome(self, seed: int, *, locked: list[str] | None = None) -> dict[str, object]:
         base = self.pending_tree_genome or self.active_tree_genome
         if base is None:
-            raise ValueError("continuous genome controls require a tree-family checkpoint")
+            raise ValueError("continuous genome controls require a tree-family or single-tree gene checkpoint")
         return self.set_tree_genome(
             TreeGenome.random(seed, family=base.family, locked=locked or (), base=base).to_dict(),
         )
@@ -300,7 +303,7 @@ class LabSession:
     def mutate_tree_genome(self, strength: float, seed: int, *, locked: list[str] | None = None) -> dict[str, object]:
         genome = self.pending_tree_genome or self.active_tree_genome
         if genome is None:
-            raise ValueError("continuous genome controls require a tree-family checkpoint")
+            raise ValueError("continuous genome controls require a tree-family or single-tree gene checkpoint")
         return self.set_tree_genome(genome.mutate(strength, seed, locked=locked or ()).to_dict())
 
     def interpolate_tree_genome(self, left: dict[str, object], right: dict[str, object], amount: float) -> dict[str, object]:
@@ -325,14 +328,14 @@ class LabSession:
         fire_seeds: tuple[int, ...] = (0, 1, 2),
         scope: str = "specimen",
     ) -> dict[str, object]:
-        if self.model_kind not in {"tree_family", "tree_specialist"}:
+        if self.model_kind not in {"tree_family", "tree_specialist", "tree_gene"}:
             raise ValueError("tree validation requires a specialist or tree-family checkpoint")
         genome = self.pending_tree_genome or self.active_tree_genome
         if genome is None:
             raise ValueError("tree validation requires a tree genome")
         if scope not in {"specimen", "family"}:
             raise ValueError("validation scope must be specimen or family")
-        if scope == "family" and self.model_kind != "tree_family":
+        if scope == "family" and self.model_kind not in {"tree_family", "tree_gene"}:
             raise ValueError("family-panel validation requires a tree-family checkpoint")
         environment = self.environment_spec or EnvironmentSpec()
         seed = int(self.config.get("validation_seed", int(self.config.get("seed", 0)) + 100_000))
@@ -357,6 +360,8 @@ class LabSession:
         else:
             environments = (environment,) if environment == EnvironmentSpec() else (environment, EnvironmentSpec())
             panel = build_candidate_panel(genome, seed=seed, fire_seeds=fire_seeds, environments=environments)
+        if self.model_kind == "tree_gene":
+            panel = tuple(case for case in panel if case.genome.family == genome.family)
         model = copy.deepcopy(self.model).eval()
         report = validate_panel(
             model,
