@@ -338,6 +338,18 @@ for(const mode of ['full','basics','variation','transition','gene_transition']){
 $('#editor').value+='resume: old.pt\ninitialize_from_specialist: old.pt\n';
 setDependencyCheckpoint('runs/basic_families/checkpoints/best.pt');
 assert.doesNotMatch($('#editor').value,/^resume:|^initialize_from_specialist:/m);
+$('#configSelect').value='tree_genes.yaml';
+state.runs.push({name:'conifer_genes',kind:'family',model_kind:'tree_gene',context_channels:0,tree_schema_compatible:true,checkpoints:['best.pt']});
+for(const mode of ['variation','gene_transition']){
+  $('#editor').value=`family_curriculum: ${mode}\ninitialize_from_checkpoint: runs/conifer_genes/checkpoints/best.pt\n`;
+  syncDependencyCheckpoints();
+  assert.equal($('#familyCurriculum').value,mode);
+  assert.match($('#familyCurriculum').innerHTML,/gene_transition/);
+  assert.doesNotMatch($('#familyCurriculum').innerHTML,/value="full"|value="basics"|value="transition"/);
+  assert.match($('#dependencyCheckpoint').innerHTML,/conifer_genes|specialist/);
+  assert.doesNotMatch($('#dependencyCheckpoint').innerHTML,/basic_families|outdated|legacy/);
+  assert.equal($('#dependencyCheckpoint').value,'runs/conifer_genes/checkpoints/best.pt');
+}
 kind='specialist';$('#configSelect').value='tree_specialist.yaml';
 syncDependencyCheckpoints();
 assert.equal($('#familyCurriculumField').hidden,true);
@@ -484,8 +496,8 @@ def test_full_presets_precede_smoke_presets_and_missing_dependencies_are_blocked
     monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
     names = list(CONFIGS)
     assert names[0] == "full_experiment.yaml"
-    assert names[1:6] == [
-        "tree_specialist.yaml", "tree_family.yaml", "tree_regeneration.yaml",
+    assert names[1:7] == [
+        "tree_specialist.yaml", "tree_genes.yaml", "tree_family.yaml", "tree_regeneration.yaml",
         "tree_environment.yaml", "tree_ecology.yaml",
     ]
     assert all(name.startswith("smoke_") for name in names[-10:])
