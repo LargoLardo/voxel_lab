@@ -305,7 +305,7 @@ def test_phase_two_dashboard_keeps_curriculum_and_checkpoint_selection_in_yaml()
     functions.append(re.search(r"const dependencySpecs=\{.*?\};", HTML, re.DOTALL).group())
     functions.extend(
         next(line for line in HTML.splitlines() if line.startswith(f"function {name}("))
-        for name in ("yamlText", "yamlNumber", "setYamlText", "setDependencyCheckpoint", "syncDependencyCheckpoints")
+        for name in ("yamlText", "yamlNumber", "setYamlText", "setDependencyCheckpoint", "syncDependencyCheckpoints", "syncSpecialistFamily", "specialistFamilyValue")
     )
     script = """
 const assert=require('node:assert/strict');
@@ -320,7 +320,7 @@ const state={runs:[
   {name:'legacy',kind:'conditional',model_kind:'legacy_conditional',context_channels:0,checkpoints:['best.pt']}
 ]};
 $('#configSelect').value='tree_family.yaml';
-""" + "\n".join(functions) + r"""
+""" + next(line for line in HTML.splitlines() if line.startswith("const specialistGenomePattern=")) + "\n".join(functions) + r"""
 for(const mode of ['full','basics','variation','transition','gene_transition']){
   $('#editor').value=`family_curriculum: ${mode}\ninitialize_from_checkpoint: runs/basic_families/checkpoints/best.pt\n`;
   syncDependencyCheckpoints();
@@ -966,3 +966,30 @@ def test_variant_archive_http_save_filter_preview_and_reload(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_specialist_selector_preserves_genes_style_and_other_yaml():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for dashboard controls")
+    functions = [next(line for line in HTML.splitlines() if line.startswith("const specialistGenomePattern=")),
+                 next(line for line in HTML.splitlines() if line.startswith("function specialistFamilyValue(")),
+                 re.search(r"function setSpecialistFamily\(.*?\n\}", HTML, re.DOTALL).group()]
+    script = "const assert=require('node:assert/strict');const editor={value:''};const $=()=>editor;\n" + "\n".join(functions) + r"""
+for(const original of ['tree_genome:\n  family: branching\n  style_seed: 42\n  genes: {height: 0.2}\niterations: 5\n',
+                      'tree_genome: {family: branching, style_seed: 42, genes: {height: 0.2}}\niterations: 5\n']){
+  editor.value=original;
+  for(const family of ['conifer','weeping','broad_canopy','branching']){
+    setSpecialistFamily(family);
+    assert.equal(specialistFamilyValue(),family);
+    assert.ok(editor.value.includes('style_seed: 42'));
+    assert.ok(editor.value.includes('genes: {height: 0.2}'));
+    assert.ok(editor.value.includes('iterations: 5'));
+  }
+  assert.equal(editor.value,original);
+}
+for(const original of ['', 'tree_genome: {}', 'tree_genome:\n  style_seed: 4']){
+  editor.value=original;setSpecialistFamily('conifer');assert.equal(specialistFamilyValue(),'conifer');
+}
+"""
+    subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
