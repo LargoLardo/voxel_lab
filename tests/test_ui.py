@@ -113,6 +113,119 @@ def test_recovered_job_does_not_follow_a_reused_pid(monkeypatch):
     assert process.poll() is not None
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Uses POSIX process groups and dashboard recovery")
+def test_pause_resume_freezes_the_job_and_children_and_survives_dashboard_restart(tmp_path, monkeypatch):
+    (tmp_path / "worker.py").write_text(
+        "import sys, time, subprocess\n"
+        "child = '--child' in sys.argv\n"
+        "if not child: subprocess.Popen([sys.executable, __file__, '--child', sys.argv[-1]])\n"
+        "while True:\n"
+        " print('child' if child else 'parent', flush=True)\n"
+        " time.sleep(.02)\n"
+    )
+    monkeypatch.setitem(CONFIGS, "smoke_2d.yaml", ("2d", "Test", "Test", "worker.py"))
+    server = create_server(tmp_path, port=0)
+    view = _launch(server, {"config": "smoke_2d.yaml", "content": "dimensions: 2\n", "device": "cpu"})
+    job = server.jobs[view["id"]]
+    process = job["process"]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def post(route, **body):
+        request = Request(
+            f"http://127.0.0.1:{server.server_port}" + route,
+            json.dumps({"token": server.token, "job": job["id"], **body}).encode(),
+            {"Content-Type": "application/json"},
+        )
+        return json.load(urlopen(request, timeout=5))
+
+    try:
+        for _ in range(100):
+            if "child" in job["log_path"].read_text():
+                break
+            time.sleep(.02)
+        assert "child" in job["log_path"].read_text()
+        assert post("/api/pause")["status"] == "paused"
+        assert post("/api/pause")["status"] == "paused"
+        time.sleep(.05)
+        frozen = job["log_path"].read_text()
+        time.sleep(.1)
+        assert job["log_path"].read_text() == frozen
+        with pytest.raises(HTTPError) as error:
+            post("/api/job/delete")
+        assert error.value.code == 400
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        server = create_server(tmp_path, port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        assert _job_view(server.jobs[job["id"]])["status"] == "paused"
+        assert post("/api/resume")["status"] == "running"
+        assert post("/api/resume")["status"] == "running"
+        for _ in range(100):
+            resumed = job["log_path"].read_text()[len(frozen):]
+            if "parent" in resumed and "child" in resumed:
+                break
+            time.sleep(.02)
+        assert "parent" in resumed and "child" in resumed
+        post("/api/pause")
+        post("/api/stop")
+        process.wait(timeout=5)
+        assert _job_view(server.jobs[job["id"]])["status"] == "stopped"
+        with pytest.raises(HTTPError) as error:
+            post("/api/resume")
+        assert error.value.code == 400
+    finally:
+        server.shutdown()
+        server.server_close()
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=5)
+
+
+@pytest.mark.parametrize("fail_child", [False, True])
+def test_windows_pause_controls_children_and_rolls_back_partial_failure(monkeypatch, fail_child):
+    import sys
+    from types import SimpleNamespace
+    from morphovoxel.ui import _pause_windows_job
+
+    class ProcessError(Exception):
+        pass
+
+    class Process:
+        paused = False
+
+        def suspend(self):
+            if self is child and fail_child:
+                raise ProcessError("access denied")
+            self.paused = True
+
+        def resume(self):
+            self.paused = False
+
+        def children(self, recursive):
+            assert recursive and self.paused
+            return [child]
+
+    parent, child = Process(), Process()
+    monkeypatch.setitem(sys.modules, "psutil", SimpleNamespace(
+        Process=lambda pid: parent, Error=ProcessError, NoSuchProcess=ProcessLookupError,
+    ))
+    job = {"process": SimpleNamespace(pid=123)}
+    if fail_child:
+        with pytest.raises(ValueError, match="access denied"):
+            _pause_windows_job(job, True)
+        assert not parent.paused and not child.paused
+    else:
+        _pause_windows_job(job, True)
+        assert parent.paused and child.paused
+        _pause_windows_job(job, False)
+        assert not parent.paused and not child.paused
+
+
 def test_log_refresh_preserves_reading_position_and_only_follows_at_bottom():
     node = shutil.which("node")
     if node is None:
@@ -440,6 +553,31 @@ def test_job_training_stats_work_without_previews_and_survive_log_tail_truncatio
     assert progress["iterations_per_second"] > 0
 
 
+def test_pause_clears_rate_window_without_losing_loss_history(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from morphovoxel.ui import _set_job_paused
+
+    # Exercise the platform-independent bookkeeping without signaling a process.
+    monkeypatch.setattr("morphovoxel.ui.os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr("morphovoxel.ui._pause_windows_job", lambda *args: None)
+    log = tmp_path / "job.log"
+    log.write_text("INFO step=500 loss=2.0\nINFO step=501 loss=4.0\n")
+    job = dict(id="test", config="tree_family.yaml", run_name="tree", command="train", started="now",
+               process=SimpleNamespace(poll=lambda: None), log_path=log,
+               _rate_samples=[(1, 0)], _iterations_per_second=99.)
+    _set_job_paused(job, True)
+    assert "_rate_samples" not in job
+    paused = _job_view(job)
+    assert paused["status"] == "paused"
+    assert paused["progress"]["iterations_per_second"] == 0
+    assert paused["progress"]["average_loss"] == 3
+    _set_job_paused(job, False)
+    resumed = _job_view(job)
+    assert resumed["progress"]["iterations_per_second"] is None
+    assert resumed["progress"]["iteration"] == 501
+    assert resumed["progress"]["average_loss"] == 3
+
+
 def test_running_job_renders_training_stats_without_an_image():
     node = shutil.which("node")
     if node is None:
@@ -460,6 +598,16 @@ assert.match(html,/average loss/);
 assert.match(html,/last 200/);
 assert.doesNotMatch(html,/<img/);
 assert.match(html,/data-stop-job/);
+assert.match(html,/data-pause-job/);
+state.jobs[0].status='paused';
+assert.match(jobs(),/data-resume-job/);
+assert.match(jobs(),/data-stop-job/);
+assert.doesNotMatch(jobs(),/data-delete-job/);
+assert.match(count.textContent,/0 active jobs.*1 paused/);
+state.jobs[0].status='complete';
+assert.match(jobs(),/data-delete-job/);
+assert.doesNotMatch(jobs(),/data-pause-job|data-resume-job/);
+state.jobs[0].status='running';
 state.jobs[0].progress.iterations_per_second=null;
 assert.match(jobs(),/Measuring…/);
 state.jobs[0].progress.completed_iterations=3;

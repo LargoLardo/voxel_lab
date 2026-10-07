@@ -16,6 +16,7 @@ dependencies = [
   "Pillow>=10",
   "imageio>=2.34",
   "PyYAML>=6",
+  "psutil>=5.9; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
