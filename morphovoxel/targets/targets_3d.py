@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 
 import numpy as np
 
@@ -15,15 +16,24 @@ TREE_TARGET_VERSION = 4
 TREE_TARGET_COMPATIBLE_VERSIONS = (3, TREE_TARGET_VERSION)
 
 
+@lru_cache(maxsize=16)
+def _ball_coordinates(shape: tuple[int, int, int]) -> tuple[np.ndarray, ...]:
+    coordinates = tuple(np.ogrid[:shape[0], :shape[1], :shape[2]])
+    for coordinate in coordinates:
+        coordinate.flags.writeable = False
+    return coordinates
+
+
 def _ball(mask: np.ndarray, z: float, y: float, x: float, radius: float) -> None:
-    zz, yy, xx = np.ogrid[: mask.shape[0], : mask.shape[1], : mask.shape[2]]
+    zz, yy, xx = _ball_coordinates(mask.shape)
     mask[(zz - z) ** 2 + (yy - y) ** 2 + (xx - x) ** 2 <= radius**2] = True
 
 
 def _segment(mask: np.ndarray, start: tuple[float, float, float], end: tuple[float, float, float], radius: float) -> None:
-    distance = np.linalg.norm(np.subtract(end, start))
+    offset = np.subtract(end, start)
+    distance = np.linalg.norm(offset)
     for t in np.linspace(0, 1, max(2, int(distance * 2))):
-        _ball(mask, *(np.add(start, np.subtract(end, start) * t)), radius)
+        _ball(mask, *(np.add(start, offset * t)), radius)
 
 
 def make_target_3d(kind: str, size: int = 32, seed: int = 0, **params) -> tuple[np.ndarray, np.ndarray]:

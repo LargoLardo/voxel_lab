@@ -101,3 +101,26 @@ def test_style_seed_variation_uses_the_same_smooth_phase_as_the_model_input():
     left_style = left.model_vector()[-2:].numpy()
     assert left_style == pytest.approx([np.sin(left.style_phase), np.cos(left.style_phase)])
     assert not np.array_equal(make_tree_target(left, 16)[0], make_tree_target(right, 16)[0])
+
+
+def test_cached_ball_coordinates_preserve_rasterization_and_cannot_be_mutated(monkeypatch):
+    from morphovoxel.targets import targets_3d
+
+    original_ball = targets_3d._ball
+    def uncached_ball(mask, z, y, x, radius):
+        zz, yy, xx = np.ogrid[:mask.shape[0], :mask.shape[1], :mask.shape[2]]
+        mask[(zz - z)**2 + (yy - y)**2 + (xx - x)**2 <= radius**2] = True
+    for size in (12, 16, 32):
+        for index, family in enumerate(TREE_FAMILIES):
+            genome = TreeGenome.random(index + 20, family=family)
+            environment = EnvironmentSpec.random(index + 30)
+            monkeypatch.setattr(targets_3d, '_ball', original_ball)
+            cached = make_tree_target(genome, size, environment)
+            monkeypatch.setattr(targets_3d, '_ball', uncached_ball)
+            expected = make_tree_target(genome, size, environment)
+            for actual, reference in zip(cached, expected):
+                np.testing.assert_array_equal(actual, reference)
+    coordinates = targets_3d._ball_coordinates((12, 16, 32))
+    assert coordinates is targets_3d._ball_coordinates((12, 16, 32))
+    with pytest.raises(ValueError):
+        coordinates[0][0] = 10
