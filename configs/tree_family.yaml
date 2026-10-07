@@ -10,6 +10,10 @@ initialize_from_checkpoint: runs/tree_specialist/checkpoints/best.pt
 family_curriculum: full
 # Both transition modes grow the source before switching, retaining its voxel state.
 transition_source_steps: 128
+# Transition batches: 50% edits, 25% bases, 25% previously learned variation.
+# Best checkpoints may lose at most .05 IoU/material accuracy or gain .05 drift
+# against the starting checkpoint, separately per family and rehearsal group.
+transition_retention_tolerance: 0.05
 basic_family_fraction: 0.25
 family_style_seeds: [0, 970806, 1941611, 2912417]
 neutral_fraction: 0.25

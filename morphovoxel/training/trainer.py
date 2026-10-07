@@ -30,7 +30,7 @@ from ..validation import ValidationCase, ValidationCriteria, build_candidate_pan
 from .losses import _distance_field, counterfactual_loss, morphology_loss, prepare_morphology_targets
 from .family import curriculum_sampling_options, curriculum_values, family_style_seeds, sample_counterfactual_family_data, sample_transition_destinations, validate_family_styles
 from .state_pool import StatePool
-from .transition import family_pool, replay_recipe, replay_sampling_options
+from .transition import family_pool, replay_recipe, replay_sampling_options, retention_panel, retention_metrics, retention_failures, transition_rank
 
 LOGGER = logging.getLogger(__name__)
 
@@ -516,6 +516,9 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 source_payload = torch.load(source_path, map_location="cpu", weights_only=False)
             recipe = replay_recipe(source_payload or {}, config)
         config["transition_replay"] = recipe
+        tolerance = float(config.setdefault("transition_retention_tolerance", .05))
+        if not 0 <= tolerance <= 1:
+            raise ValueError("transition_retention_tolerance must be within [0, 1]")
         transition_state = (restored or {}).get("transition_state") or {}
         transition_state.setdefault("cursors", {"transition": 0, "neutral": 0, "variation": 0})
         if isinstance(transition_source_steps, bool) or not isinstance(transition_source_steps, int) or transition_source_steps < 1:
@@ -534,9 +537,10 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         "context_channels": context_channels,
     })
     write_json(run / "metadata.json", run_metadata)
-    records, validation_records = [], []
+    records, validation_records, retention_records = [], [], []
     if restored:
-        for rows, path in ((records, run / "logs.csv"), (validation_records, run / "metrics" / "persistence_validation.csv")):
+        for rows, path in ((records, run / "logs.csv"), (validation_records, run / "metrics" / "persistence_validation.csv"),
+                           (retention_records, run / "metrics" / "retention_validation.csv")):
             if path.exists():
                 saved = pd.read_csv(path)
                 rows.extend(saved[saved["step"] <= start].to_dict("records"))
@@ -634,7 +638,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             saved_pool = transition_state.get("pools", {}).get(label)
             if saved_pool and not config.get("reset_pool_on_resume", False):
                 replay_pools[label] = _restore_pool(saved_pool)
-            else:
+            if label not in replay_pools or len(replay_pools[label].states) < pool_size:
                 data = sample_counterfactual_family_data(
                     pool_size // 2, size, seed + 30_000 + index,
                     active_gene_names=active_gene_names, families=trained_families,
@@ -642,7 +646,11 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                     minimum_branch_voxels=minimum_branch_voxels,
                     minimum_leaf_voxels=minimum_leaf_voxels,
                 )
-                replay_pools[label] = family_pool(data, size, layout, config, seed + 30_000 + index)
+                initialized_replay = family_pool(data, size, layout, config, seed + 30_000 + index)
+                if label in replay_pools:
+                    replay_pools[label].append_from(initialized_replay, len(replay_pools[label].states))
+                else:
+                    replay_pools[label] = initialized_replay
         # StatePool updates these tensors in place, including ages and identities.
         transition_state["pools"] = {label: value.state_dict() for label, value in replay_pools.items()}
     specialist_target = specialist_material = specialist_context = specialist_prepared_targets = None
@@ -653,6 +661,34 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         if context_channels:
             specialist_context = environment_context_batch([environment_default] * batch, size, device=device)
         specialist_prepared_targets = prepare_morphology_targets(specialist_target, specialist_material)
+    if transition_training and validation_steps > 0:
+        retention_cases = retention_panel(recipe, trained_families, config)
+        retention_options = dict(
+            layout=layout, world_size=size, steps=validation_steps,
+            recovery_steps=int(config.get("validation_recovery_steps", 64)),
+            seed_size=int(config.get("seed_size", 1)), device=device,
+            criteria=ValidationCriteria(
+                min_steps=int(config.get("validation_min_steps", 256)),
+                min_recovery_steps=int(config.get("validation_min_recovery_steps", 64)), state_limit=state_limit,
+            ),
+        )
+        retention_settings = {
+            "panel": [case.to_dict() for case in retention_cases],
+            **{key: value for key, value in retention_options.items() if key not in {"layout", "device", "criteria"}},
+            "criteria": retention_options["criteria"].to_dict(), "tolerance": tolerance,
+        }
+        guard = transition_state.get("retention")
+        if guard is not None and guard["settings"] != retention_settings:
+            raise ValueError("retention validation settings changed; use initialize_from_checkpoint for a new baseline")
+        if guard is None:
+            LOGGER.info("Measuring original growth before transition training (%d retention cases)", len(retention_cases))
+            baseline = retention_metrics(validate_panel(
+                model, retention_cases, **retention_options,
+                on_trial=lambda completed, total, trial: LOGGER.info("retention baseline case=%d/%d", completed, total),
+            ))
+            guard = {"settings": retention_settings, "baseline": baseline}
+            transition_state["retention"] = guard
+        write_json(run / "metrics" / "retention_baseline.json", guard)
     final_state = final_target = final_materials = None
     best_score, last_validation = float("-inf"), None
     previous_stage = None
@@ -667,14 +703,20 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         old_settings = {key: value for key, value in (incumbent.get("config") or {}).items() if key not in run_options}
         new_settings = {key: value for key, value in config.items() if key not in run_options}
         old_validation = incumbent.get("validation") or {}
-        # Older transition scores ignored edited voxels and are not comparable.
-        comparable = (config.get("family_curriculum") not in {"transition", "gene_transition"}
-                      or "min_transition_edit_accuracy" in old_validation.get("persistence_report", {}).get("criteria", {}))
+        # Scores without the same original-growth baseline are not comparable.
+        comparable = (not transition_training or (
+            (incumbent.get("transition_state") or {}).get("retention") == transition_state.get("retention")
+            and "retention" in old_validation))
         if old_settings == new_settings and old_validation and comparable:
             last_validation = incumbent["validation"]
             best_score = float(last_validation.get("best_worst_genome_persistence_score", float("-inf")))
             previous_stage = last_validation.get("curriculum_stage")
+            if transition_training:
+                transition_state["best_rank"] = incumbent["transition_state"]["best_rank"]
         del incumbent
+    if transition_training and transition_state.get("best_rank") is not None:
+        best_score = transition_state["best_rank"][0]
+        previous_stage = config["family_curriculum"]
     pair_cursor = (start * accumulation_steps * max(1, batch // 2)) if tree_conditioned else 0
     for micro_step in range(start * accumulation_steps, (start + iterations) * accumulation_steps):
         step = micro_step // accumulation_steps
@@ -1084,10 +1126,33 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 )
             if validation_records:
                 _write_metrics(run / "metrics" / "persistence_validation.csv", validation_records)
-            # Strict persistence criteria often tie at zero early in training.
-            # Keep the newest tied checkpoint instead of freezing best.pt at
-            # the first validation window.
-            if worst_score >= best_score:
+            promote = worst_score >= best_score
+            if transition_training:
+                LOGGER.info("Checking original growth retention step=%d", step + 1)
+                retained = retention_metrics(validate_panel(
+                    model, retention_cases, **retention_options,
+                    on_trial=lambda completed, total, trial: LOGGER.info(
+                        "retention validation step=%d case=%d/%d", step + 1, completed, total,
+                    ),
+                ))
+                failures = retention_failures(guard["baseline"], retained, tolerance)
+                rank = transition_rank(report)
+                promote = not failures and rank > tuple(transition_state.get("best_rank", [-1., -1.]))
+                last_validation["retention"] = {
+                    "eligible": not failures, "failure_reasons": failures,
+                    "metrics": retained, "tolerance": tolerance, "transition_rank": list(rank),
+                }
+                retention_records.extend(
+                    {"step": step + 1, "group": group, **metrics,
+                     "eligible": not failures, "failure_reasons": ";".join(failures)}
+                    for group, metrics in retained.items()
+                )
+                _write_metrics(run / "metrics" / "retention_validation.csv", retention_records)
+                if failures:
+                    LOGGER.info("Keeping previous best checkpoint: %s", "; ".join(failures))
+                if promote:
+                    transition_state["best_rank"] = list(rank)
+            if promote:
                 best_score = worst_score
                 best_validation = {**last_validation, "best_worst_genome_persistence_score": best_score}
                 save_checkpoint(

@@ -79,3 +79,70 @@ def family_pool(data: FamilyData, size: int, layout, config: dict, seed: int) ->
         condition_ids=data.condition_ids, pair_ids=data.pair_ids,
         target_distances=data.target_distances,
     )
+
+
+def retention_panel(recipe: dict, families, config: dict):
+    """Fixed bases plus one varied pair per gene; distribute fire seeds to limit cost."""
+    from ..genomes import FAMILY_GENE_NAMES
+    from ..validation import ValidationCase
+    from .family import sample_counterfactual_family_data
+
+    fire_seeds = tuple(map(int, config.get("validation_fire_seeds", [100_000, 100_001])))
+    if not fire_seeds:
+        raise ValueError("transition retention requires at least one validation fire seed")
+    base = TreeGenome.from_dict(recipe.get("neutral_genome", {}))
+    entries = [
+        ("neutral", TreeGenome(family=family, genes=base.genes, style_seed=style))
+        for family in families for style in recipe["style_seeds"]
+    ]
+    if recipe["genome_span"]:
+        data = sample_counterfactual_family_data(
+            len(families) * len(FAMILY_GENE_NAMES), int(config.get("world_size", 16)),
+            int(config.get("seed", 0)) + 40_000, families=families,
+            **replay_sampling_options(recipe, neutral=False),
+            minimum_branch_voxels=int(config.get("minimum_branch_voxels", 1)),
+            minimum_leaf_voxels=int(config.get("minimum_leaf_voxels", 1)),
+        )
+        entries.extend(("variation", genome) for genome in data.genomes)
+    environment = EnvironmentSpec.from_dict(recipe.get("environment", {}))
+    return tuple(
+        ValidationCase(f"retention-{index}", category, genome, environment, fire_seeds[index % len(fire_seeds)])
+        for index, (category, genome) in enumerate(entries)
+    )
+
+
+def retention_metrics(report) -> dict:
+    """Separate tree families and bases/variations so gains cannot hide forgetting."""
+    groups = {}
+    for trial in report.trials:
+        key = f"{trial.case.genome.family}/{trial.case.category}"
+        groups.setdefault(key, []).append(trial.metrics)
+    return {
+        key: {**{name: sum(row[name] for row in rows) / len(rows)
+                 for name in ("target_iou", "material_accuracy", "late_drift")},
+              "finite_state": min(row["finite_state"] for row in rows)}
+        for key, rows in groups.items()
+    }
+
+
+def retention_failures(baseline: dict, current: dict, tolerance: float) -> list[str]:
+    failures = []
+    for group, original in baseline.items():
+        candidate = current.get(group)
+        if candidate is None or not candidate["finite_state"]:
+            failures.append(f"{group}: missing or non-finite state")
+            continue
+        for metric in ("target_iou", "material_accuracy", "late_drift"):
+            regression = ((candidate[metric] - original[metric]) if metric == "late_drift"
+                          else (original[metric] - candidate[metric]))
+            if regression > tolerance:
+                failures.append(f"{group}: {metric} regressed by {regression:.4f}")
+    return failures
+
+
+def transition_rank(report) -> tuple[float, float]:
+    """Break strict-score ties with actual destination and edited-voxel quality."""
+    destination = sum(trial.metrics["target_iou"] for trial in report.trials) / len(report.trials)
+    edits = [trial.metrics["transition_edit_accuracy"] for trial in report.trials
+             if trial.metrics.get("transition_edited_voxels", 0) > 0]
+    return report.score, min(destination, sum(edits) / len(edits)) if edits else destination
