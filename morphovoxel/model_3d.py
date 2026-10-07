@@ -9,6 +9,24 @@ from .config import resolve_hidden_layers
 from .perception_3d import perceive_3d
 
 
+class _PointwiseConv3d(nn.Conv3d):
+    """A voxel-wise affine layer with the same checkpoint format as Conv3d."""
+
+    def __init__(self, incoming: int, outgoing: int):
+        super().__init__(incoming, outgoing, 1)
+
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        if state.device.type == "mps" and torch.is_grad_enabled():
+            # Metal's 3D convolution backward is costly even for a 1x1x1
+            # kernel. Flattening two spatial axes lets its 2D kernel perform
+            # exactly the same independent affine transform at each voxel.
+            # Without backward, native Conv3d is already as fast or faster.
+            return F.conv2d(state.flatten(3), self.weight.squeeze(-1), self.bias).reshape(
+                state.shape[0], self.out_channels, *state.shape[2:],
+            )
+        return super().forward(state)
+
+
 class NeuralCA3D(nn.Module):
     """Shared local 3x3x3 update rule for a semantic voxel state."""
 
@@ -32,8 +50,8 @@ class NeuralCA3D(nn.Module):
         widths = (channels * 5 + genome_size + context_channels, *self.hidden_layers)
         layers = []
         for incoming, outgoing in zip(widths, widths[1:]):
-            layers.extend((nn.Conv3d(incoming, outgoing, 1), nn.ReLU()))
-        self.update = nn.Sequential(*layers, nn.Conv3d(widths[-1], channels, 1))
+            layers.extend((_PointwiseConv3d(incoming, outgoing), nn.ReLU()))
+        self.update = nn.Sequential(*layers, _PointwiseConv3d(widths[-1], channels))
         nn.init.normal_(self.update[-1].weight, std=1e-3)
         nn.init.zeros_(self.update[-1].bias)
 
@@ -97,14 +115,14 @@ class TreeFamilyNCA3D(nn.Module):
         self.family_count = family_count
         self.continuous_size = genome_size - family_count
         self.hidden_layers = resolve_hidden_layers(hidden, hidden_layers)
-        self.shared = nn.Conv3d(channels * 5 + context_channels, self.hidden_layers[0], 1)
+        self.shared = _PointwiseConv3d(channels * 5 + context_channels, self.hidden_layers[0])
         layers = []
         for incoming, outgoing in zip(self.hidden_layers, self.hidden_layers[1:]):
-            layers.extend((nn.Conv3d(incoming, outgoing, 1), nn.ReLU()))
+            layers.extend((_PointwiseConv3d(incoming, outgoing), nn.ReLU()))
         self.hidden_update = nn.Sequential(*layers)
         hidden = self.hidden_layers[-1]
         self.film = nn.ModuleList(nn.Linear(self.continuous_size, hidden * 2) for _ in range(family_count))
-        self.heads = nn.ModuleList(nn.Conv3d(hidden, channels, 1) for _ in range(family_count))
+        self.heads = nn.ModuleList(_PointwiseConv3d(hidden, channels) for _ in range(family_count))
         for layer in self.film:
             nn.init.zeros_(layer.weight)
             nn.init.zeros_(layer.bias)

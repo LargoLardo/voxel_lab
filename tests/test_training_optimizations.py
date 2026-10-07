@@ -1,11 +1,12 @@
 import copy
+from types import MethodType
 
 import pytest
 import torch
 from torch.nn import functional as F
 
 from morphovoxel.genomes import TREE_FAMILIES, TreeGenome, tree_genome_tensor
-from morphovoxel.model_3d import TreeFamilyNCA3D
+from morphovoxel.model_3d import NeuralCA3D, TreeFamilyNCA3D
 from morphovoxel.random_utils import seed_everything
 from morphovoxel.rollout import rollout
 from morphovoxel.state import StateLayout
@@ -17,6 +18,54 @@ from morphovoxel.training.losses import _soft_overlap, morphology_loss, prepare_
 DEVICES = ["cpu", pytest.param("mps", marks=pytest.mark.skipif(
     not torch.backends.mps.is_available(), reason="Apple GPU unavailable",
 ))]
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("model_type,genome_size,context_channels,layers", [
+    (NeuralCA3D, 0, 0, [8]),
+    (NeuralCA3D, 15, 2, [8, 5]),
+    (TreeFamilyNCA3D, 15, 2, [8, 5]),
+])
+def test_pointwise_layers_match_conv3d_through_rollout_and_backward(
+    device, model_type, genome_size, context_channels, layers,
+):
+    seed_everything(123, deterministic=device != "mps")
+    model = model_type(5, genome_size=genome_size, context_channels=context_channels, hidden_layers=layers).to(device)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.normal_(0, .03)
+    reference = copy.deepcopy(model)
+    for layer in reference.modules():
+        if isinstance(layer, torch.nn.Conv3d):
+            layer.forward = MethodType(torch.nn.Conv3d.forward, layer)
+    # Existing checkpoints retain identical parameter keys and shapes.
+    reference.load_state_dict(model.state_dict(), strict=True)
+    initial = torch.rand(4, 5, 3, 4, 5, device=device) + .2
+    genomes = tree_genome_tensor([TreeGenome(family=f) for f in TREE_FAMILIES], device=device) if genome_size else None
+    context = torch.rand(4, context_channels, 3, 4, 5, device=device) if context_channels else None
+    with torch.inference_mode():
+        rollout(model, initial, 2, genomes, context=context)
+    for update in range(2):
+        results, inputs = [], []
+        for net in (model, reference):
+            net.zero_grad(set_to_none=True)
+            state = initial.clone().requires_grad_()
+            g = genomes.clone().requires_grad_() if genomes is not None else None
+            c = context.clone().requires_grad_() if context is not None else None
+            seed_everything(7 + update, deterministic=device != "mps")
+            grown, _ = rollout(net, state, 3, g, context=c, shared_fire_pairs=True)
+            final, _ = rollout(net, grown, 2, g, context=c, shared_fire_pairs=True)
+            loss = grown.square().mean() + final.square().mean()
+            loss.backward()
+            results.append(final.detach())
+            inputs.append([value.grad for value in (state, g, c) if value is not None])
+        torch.testing.assert_close(results[0], results[1], atol=2e-6, rtol=1e-5)
+        for actual, expected in zip(inputs[0], inputs[1]):
+            torch.testing.assert_close(actual, expected, atol=1e-7, rtol=1e-4)
+        for parameter, original in zip(model.parameters(), reference.parameters()):
+            torch.testing.assert_close(parameter.grad, original.grad, atol=1e-7, rtol=1e-4)
+        for net in (model, reference):
+            torch.optim.SGD(net.parameters(), lr=.01).step()
 
 
 @pytest.mark.parametrize("device", DEVICES)
