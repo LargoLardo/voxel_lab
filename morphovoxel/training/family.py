@@ -308,6 +308,8 @@ def sample_counterfactual_family_data(
     style_random_fraction: float = 1.0,
     neutral_fraction: float = 0.0,
     random_gene_values: bool = False,
+    neutral_genome: TreeGenome | None = None,
+    fixed_environment: EnvironmentSpec | None = None,
     environment_span: float = 0.0,
     active_gene_names: Sequence[str] = FAMILY_GENE_NAMES,
     condition_ids: Sequence[int] | None = None,
@@ -350,7 +352,8 @@ def sample_counterfactual_family_data(
         neutral = genome_span == 0 or (neutral_fraction > 0 and rng.random() < neutral_fraction)
         for attempt in range(128):
             sample_seed = int(rng.integers(0, 2**31))
-            base = TreeGenome.random(sample_seed, family=family, span=0.0 if neutral else background_span, locked=locked)
+            base = (replace(neutral_genome, family=family) if neutral and neutral_genome is not None else
+                    TreeGenome.random(sample_seed, family=family, span=0.0 if neutral else background_span, locked=locked))
             if style_seeds is not None and (neutral or rng.random() >= style_random_fraction):
                 base = replace(base, style_seed=int(rng.choice(style_seeds)))
             # Live edits need short and long moves at varied starting values,
@@ -362,7 +365,7 @@ def sample_counterfactual_family_data(
                       if (random_gene_values or attempt >= 32) and not neutral else (-genome_span, genome_span))
             low = base if neutral else base.with_values({gene_name: float(values[0])})
             high = base if neutral else base.with_values({gene_name: float(values[1])})
-            environment = EnvironmentSpec.random(int(rng.integers(0, 2**31)), span=environment_span) if environment_span else EnvironmentSpec()
+            environment = fixed_environment or (EnvironmentSpec.random(int(rng.integers(0, 2**31)), span=environment_span) if environment_span else EnvironmentSpec())
             low_target = _cached_tree_target(low, size, environment)
             pair_targets = (low_target, low_target if neutral else _cached_tree_target(high, size, environment))
             counts = [

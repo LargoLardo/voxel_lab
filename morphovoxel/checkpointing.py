@@ -192,6 +192,7 @@ def save_checkpoint(
     pool=None,
     genomes=None,
     validation=None,
+    transition_state=None,
     metadata: Mapping[str, Any] | None = None,
 ) -> None:
     path = Path(path)
@@ -211,6 +212,7 @@ def save_checkpoint(
         "pool": pool.state_dict() if pool else None,
         "genomes": genomes,
         "validation": validation,
+        "transition_state": transition_state,
         "rng": {
             "python": random.getstate(),
             "numpy": np.random.get_state(),

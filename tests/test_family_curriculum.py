@@ -418,7 +418,7 @@ def test_phase_two_checkpoint_handoffs_and_full_curriculum_validation(tmp_path, 
             assert ((validation.source_family != validation.family) == (mode == "transition")).all()
             assert "metric_source_target_iou" in validation
             assert "metric_transition_edit_accuracy" in validation
-            assert ("counterfactual" in logs) == (mode == "gene_transition")
+            assert "counterfactual" in logs  # Includes learned variation rehearsal for family switches.
             assert "transition_fraction" in logs
             assert (run / "rollouts" / "transition.json").is_file()
     # A true resume continues the full curriculum's variation phase, even with a

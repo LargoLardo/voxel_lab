@@ -30,6 +30,7 @@ from ..validation import ValidationCase, ValidationCriteria, build_candidate_pan
 from .losses import _distance_field, counterfactual_loss, morphology_loss, prepare_morphology_targets
 from .family import curriculum_sampling_options, curriculum_values, family_style_seeds, sample_counterfactual_family_data, sample_transition_destinations, validate_family_styles
 from .state_pool import StatePool
+from .transition import family_pool, replay_recipe, replay_sampling_options
 
 LOGGER = logging.getLogger(__name__)
 
@@ -346,6 +347,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     if model_kind == "tree_gene":
         config.setdefault("family_curriculum", "variation")
     source_path = config.get("resume") or config.get("initialize_from_checkpoint") or config.get("initialize_from_specialist")
+    source_payload = None
     gene_curriculum = config.get("family_curriculum") in {"variation", "gene_transition"}
     if model_kind in {"tree_family", "tree_gene"} and gene_curriculum and source_path:
         source_payload = torch.load(source_path, map_location="cpu", weights_only=False)
@@ -501,8 +503,21 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         config["family_curriculum_start_step"] = curriculum_start
         config["family_curriculum_iterations"] = curriculum_iterations
         curriculum_values(start - curriculum_start, curriculum_iterations, config)
+    transition_training = config.get("family_curriculum") in {"transition", "gene_transition"}
+    transition_state = None
     transition_source_steps = config.get("transition_source_steps", 128)
-    if config.get("family_curriculum") in {"transition", "gene_transition"}:
+    if transition_training:
+        if restored:
+            recipe = (restored.get("config") or {}).get("transition_replay")
+        else:
+            recipe = None
+        if recipe is None:
+            if source_payload is None and source_path:
+                source_payload = torch.load(source_path, map_location="cpu", weights_only=False)
+            recipe = replay_recipe(source_payload or {}, config)
+        config["transition_replay"] = recipe
+        transition_state = (restored or {}).get("transition_state") or {}
+        transition_state.setdefault("cursors", {"transition": 0, "neutral": 0, "variation": 0})
         if isinstance(transition_source_steps, bool) or not isinstance(transition_source_steps, int) or transition_source_steps < 1:
             raise ValueError("transition_source_steps must be a positive integer")
     run = create_run_directory(str(config.get("run_name", f"phase{dimensions}d")), config.get("runs_root", "runs"))
@@ -591,23 +606,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             minimum_branch_voxels=minimum_branch_voxels,
             minimum_leaf_voxels=minimum_leaf_voxels,
         )
-        pool_states = seed_state(
-            pool_size // 2, size, layout, dimensions=dimensions,
-            seed_size=int(config.get("seed_size", 1)), noise=float(config.get("seed_noise", 0)),
-            random_seed=seed, device="cpu",
-        ).repeat_interleave(2, 0)
-        initialized_pool = StatePool(
-            pool_states,
-            family.model_genomes,
-            target_occupancy=family.target_occupancy,
-            target_materials=family.target_materials,
-            environments=family.environments,
-            environment_specs=family.environment_vectors,
-            style_seeds=family.style_seeds,
-            condition_ids=family.condition_ids,
-            pair_ids=family.pair_ids,
-            target_distances=family.target_distances,
-        )
+        initialized_pool = family_pool(family, size, layout, config, seed)
     elif pool_size and initialize_pool:
         pool_labels = torch.arange(pool_size) % (len(MORPHOLOGIES) if conditional else 1)
         pool_genomes = one_hot_genomes(pool_labels) if conditional else pool_labels[:, None].float()
@@ -629,6 +628,23 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     if tree_gene and pool is not None:
         if not bool((pool.genomes[:, :len(TREE_FAMILIES)].argmax(1) == TREE_FAMILIES.index(tree_default.family)).all()):
             raise ValueError("checkpoint pool contains a different tree family; start a fresh gene curriculum")
+    replay_pools = {}
+    if transition_training:
+        for index, label in enumerate(("neutral", "variation")):
+            saved_pool = transition_state.get("pools", {}).get(label)
+            if saved_pool and not config.get("reset_pool_on_resume", False):
+                replay_pools[label] = _restore_pool(saved_pool)
+            else:
+                data = sample_counterfactual_family_data(
+                    pool_size // 2, size, seed + 30_000 + index,
+                    active_gene_names=active_gene_names, families=trained_families,
+                    **replay_sampling_options(recipe, neutral=label == "neutral"),
+                    minimum_branch_voxels=minimum_branch_voxels,
+                    minimum_leaf_voxels=minimum_leaf_voxels,
+                )
+                replay_pools[label] = family_pool(data, size, layout, config, seed + 30_000 + index)
+        # StatePool updates these tensors in place, including ages and identities.
+        transition_state["pools"] = {label: value.state_dict() for label, value in replay_pools.items()}
     specialist_target = specialist_material = specialist_context = specialist_prepared_targets = None
     if tree_specialist:
         occupancy, materials = make_tree_target(tree_default, size, environment_default)
@@ -676,11 +692,26 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             best_score, last_validation = float("-inf"), None
             previous_stage = current_stage
         context = None
-        if pool and tree_conditioned:
-            pool_batch = pool.sample_stratified_pairs(batch, pair_cursor, device)
-            pair_cursor += batch // 2
+        batch_kind = "transition"
+        if transition_training:
+            choice = random.random()
+            batch_kind = "neutral" if choice < .25 else "variation" if choice < .5 else "transition"
+        transition_batch = transition_training and batch_kind == "transition"
+        active_pool = replay_pools.get(batch_kind, pool)
+        sampling_options = ({"genome_span": curriculum["genome_span"],
+                             "environment_span": curriculum["environment_span"] if context_channels else 0.0,
+                             **curriculum_sampling_options(curriculum, config)} if tree_conditioned else {})
+        if transition_training and not transition_batch:
+            sampling_options = replay_sampling_options(recipe, neutral=batch_kind == "neutral")
+        if active_pool and tree_conditioned:
+            cursor = transition_state["cursors"][batch_kind] if transition_training else pair_cursor
+            pool_batch = active_pool.sample_stratified_pairs(batch, cursor, device)
+            if transition_training:
+                transition_state["cursors"][batch_kind] += batch // 2
+            else:
+                pair_cursor += batch // 2
         else:
-            pool_batch = pool.sample(batch, torch.Generator().manual_seed(seed + micro_step), device) if pool else None
+            pool_batch = active_pool.sample(batch, torch.Generator().manual_seed(seed + micro_step), device) if active_pool else None
         if pool_batch:
             state = pool_batch.states
             if tree_conditioned:
@@ -733,10 +764,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                     replacement_conditions = pool_batch.condition_ids[reseed][::2].tolist()
                     replacement = sample_counterfactual_family_data(
                         len(replacement_conditions), size, seed + 10_000 + micro_step,
-                        genome_span=curriculum["genome_span"],
-                        environment_span=curriculum["environment_span"] if context_channels else 0.0,
                         active_gene_names=active_gene_names, families=trained_families,
-                        **curriculum_sampling_options(curriculum, config),
+                        **sampling_options,
                         condition_ids=replacement_conditions,
                         minimum_branch_voxels=minimum_branch_voxels,
                         minimum_leaf_voxels=minimum_leaf_voxels,
@@ -751,7 +780,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                     pool_batch.style_seeds[reseed] = replacement.style_seeds
                     if pool_batch.environment_specs is not None:
                         pool_batch.environment_specs[reseed.cpu()] = replacement.environment_vectors
-                    pool.replace_entries(
+                    active_pool.replace_entries(
                         pool_batch.indices[reseed], states=fresh_states, genomes=replacement.model_genomes,
                         target_occupancy=replacement.target_occupancy,
                         target_materials=replacement.target_materials,
@@ -788,7 +817,9 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         steps, persistence_steps = _training_horizons(
             (minimum, maximum), (persistence_minimum, persistence_maximum), differentiable_step_limit,
         )
-        basic_batch = current_stage in {"basics", "transition"}
+        basic_batch = (current_stage == "basics" or (current_stage == "transition" and transition_batch)
+                       or (transition_training and (batch_kind == "neutral" or
+                           (batch_kind == "variation" and not recipe["genome_span"]))))
         if basic_batch:
             # Neutral pairs start identically and share fire masks and damage.
             # Grow each once, then restore both pool slots after the update.
@@ -799,10 +830,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         distance = pool_batch.target_distances if tree_conditioned else None
         if basic_batch:
             distance = distance[::2]
-        # Rehearse ordinary growth on 25% of batches, independently of the pool
-        # cursor so no family is assigned only rehearsal or only transitions.
-        # The source pool retains its original identity; switched states must not enter it.
-        transition_batch = current_stage in {"transition", "gene_transition"} and random.random() >= 0.25
+        # Switched states must not enter a source or unchanged-genome rehearsal pool.
         transition_source = None
         if transition_batch:
             transition_source, source_ages = _mature_transition_sources(
@@ -861,6 +889,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 ) * persistence_counterfactual
         if current_stage in {"transition", "gene_transition"}:
             components["transition_fraction"] = loss.new_tensor(float(transition_batch))
+            components["neutral_rehearsal_fraction"] = loss.new_tensor(float(batch_kind == "neutral"))
+            components["variation_rehearsal_fraction"] = loss.new_tensor(float(batch_kind == "variation"))
         if preview_started is not None:
             total_steps = steps + persistence_steps
             write_live_preview(
@@ -883,7 +913,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         if pool and pool_batch:
             pool_state = transition_source if transition_batch else committed_state
             pool_state = pool_state.detach().repeat_interleave(2, 0) if basic_batch else pool_state
-            pool.commit(pool_batch, pool_state, 0 if transition_batch else steps + persistence_steps)
+            active_pool.commit(pool_batch, pool_state, 0 if transition_batch else steps + persistence_steps)
         final_state = committed_state
         final_target, final_materials = target, material
         if not optimizer_update:
@@ -908,7 +938,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             # or on finishing the run (or its potentially lengthy validation).
             save_checkpoint(
                 run / "checkpoints" / "latest.pt", model, optimizer, step=step + 1,
-                scheduler=scheduler, config=config, pool=pool,
+                scheduler=scheduler, config=config, pool=pool, transition_state=transition_state,
                 genomes=({"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()} if tree_conditioned else list(MORPHOLOGIES) if conditional else None),
             )
         basics_complete = current_stage == "basics" and (
@@ -1062,7 +1092,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 best_validation = {**last_validation, "best_worst_genome_persistence_score": best_score}
                 save_checkpoint(
                     run / "checkpoints" / "best.pt", model, optimizer, step=step + 1,
-                    scheduler=scheduler, config=config, pool=pool,
+                    scheduler=scheduler, config=config, pool=pool, transition_state=transition_state,
                     genomes=({"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()} if tree_conditioned else list(MORPHOLOGIES) if conditional else None),
                     validation=best_validation,
                 )
@@ -1070,13 +1100,13 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         if basics_complete:
             save_checkpoint(
                 run / "checkpoints" / "basic_families.pt", model, optimizer, step=step + 1,
-                scheduler=scheduler, config=config, pool=pool, validation=last_validation,
+                scheduler=scheduler, config=config, pool=pool, transition_state=transition_state, validation=last_validation,
                 genomes={"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()},
             )
     checkpoint = run / "checkpoints" / "latest.pt"
     validation_summary = ({**last_validation, "best_worst_genome_persistence_score": best_score} if last_validation else None)
     save_checkpoint(
-        checkpoint, model, optimizer, step=start + iterations, scheduler=scheduler, config=config, pool=pool,
+        checkpoint, model, optimizer, step=start + iterations, scheduler=scheduler, config=config, pool=pool, transition_state=transition_state,
         genomes=({"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()} if tree_conditioned else list(MORPHOLOGIES) if conditional else None),
         validation=validation_summary,
     )
