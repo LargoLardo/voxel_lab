@@ -343,28 +343,42 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     model_kind = str(config.get("model_kind", default_kind))
     if model_kind not in {"specialist", "tree_specialist", "legacy_conditional", "tree_family", "tree_gene"}:
         raise ValueError("model_kind must be specialist, tree_specialist, legacy_conditional, tree_family, or tree_gene")
-    tree_gene = model_kind == "tree_gene"
-    tree_conditioned = model_kind in {"tree_family", "tree_gene"}
-    if tree_gene:
-        config["conditional"] = True
+    if model_kind == "tree_gene":
         config.setdefault("family_curriculum", "variation")
-        if config["family_curriculum"] not in {"variation", "gene_transition"}:
-            raise ValueError("single-tree gene training supports variation or gene_transition only")
-        source_path = config.get("resume") or config.get("initialize_from_checkpoint") or config.get("initialize_from_specialist")
-        if source_path:
-            source_payload = torch.load(source_path, map_location="cpu", weights_only=False)
-            source_config = source_payload.get("config") or {}
-            source_kind = (source_payload.get("metadata") or source_config).get("model_kind")
-            if source_kind not in {"tree_specialist", "tree_gene"}:
-                raise ValueError("single-tree gene training requires a tree_specialist or tree_gene checkpoint")
+    source_path = config.get("resume") or config.get("initialize_from_checkpoint") or config.get("initialize_from_specialist")
+    gene_curriculum = config.get("family_curriculum") in {"variation", "gene_transition"}
+    if model_kind in {"tree_family", "tree_gene"} and gene_curriculum and source_path:
+        source_payload = torch.load(source_path, map_location="cpu", weights_only=False)
+        if not isinstance(source_payload, dict):
+            raise ValueError("initialization checkpoint payload must be a mapping")
+        source_config = source_payload.get("config") or {}
+        source_metadata = source_payload.get("metadata") or source_config
+        if not isinstance(source_config, dict) or not isinstance(source_metadata, dict):
+            raise ValueError("initialization checkpoint config and metadata must be mappings")
+        source_kind = source_metadata.get("model_kind")
+        if source_kind not in {"tree_specialist", "tree_gene", "tree_family"}:
+            raise ValueError("gene curricula require a tree specialist or genome-conditioned tree checkpoint")
+        # The curriculum follows the input checkpoint, not a separate preset.
+        model_kind = "tree_family" if source_kind == "tree_family" else "tree_gene"
+        config["conditional"] = True
+        if model_kind == "tree_gene":
             source_genome = TreeGenome.from_dict(source_config.get("tree_genome", {}))
             requested = TreeGenome.from_dict(config.get("tree_genome", source_genome.to_dict()))
             if requested.family != source_genome.family:
                 raise ValueError(f"checkpoint specializes in {source_genome.family}; cannot train it as {requested.family}")
             config.setdefault("tree_genome", source_genome.to_dict())
-            for key in ("hidden_layers", "model_width", "hidden_channels", "materials", "fire_rate", "environment_conditioning"):
-                if key in source_config:
-                    config.setdefault(key, source_config[key])
+        # Continuing trained weights requires the checkpoint's architecture.
+        # Preset defaults must not silently add context or resize its channels.
+        for key in ("hidden_layers", "model_width", "hidden_channels", "materials", "fire_rate"):
+            if key in source_config:
+                config[key] = source_config[key]
+        config["environment_conditioning"] = bool(source_metadata.get("context_channels", 0))
+    tree_gene = model_kind == "tree_gene"
+    tree_conditioned = model_kind in {"tree_family", "tree_gene"}
+    if tree_gene:
+        config["conditional"] = True
+        if not gene_curriculum:
+            raise ValueError("single-tree gene training supports variation or gene_transition only")
     tree_specialist = model_kind == "tree_specialist"
     phase_two = config.get("family_curriculum") is not None
     iterations = int(config.get("iterations", 10))
@@ -378,7 +392,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         raise ValueError("tree models require three dimensions")
     if model_kind == "legacy_conditional" and not conditional:
         raise ValueError("legacy_conditional requires conditional training")
-    config.setdefault("model_kind", model_kind)
+    config["model_kind"] = model_kind
     if tree_conditioned or tree_specialist:
         config.setdefault("genome_schema_version", TREE_GENOME_VERSION)
         config.setdefault("environment_schema_version", ENVIRONMENT_SCHEMA_VERSION)

@@ -338,18 +338,26 @@ for(const mode of ['full','basics','variation','transition','gene_transition']){
 $('#editor').value+='resume: old.pt\ninitialize_from_specialist: old.pt\n';
 setDependencyCheckpoint('runs/basic_families/checkpoints/best.pt');
 assert.doesNotMatch($('#editor').value,/^resume:|^initialize_from_specialist:/m);
-$('#configSelect').value='tree_genes.yaml';
+assert.equal(dependencySpecs['tree_genes.yaml'],undefined);
 state.runs.push({name:'conifer_genes',kind:'family',model_kind:'tree_gene',context_channels:0,tree_schema_compatible:true,checkpoints:['best.pt']});
 for(const mode of ['variation','gene_transition']){
   $('#editor').value=`family_curriculum: ${mode}\ninitialize_from_checkpoint: runs/conifer_genes/checkpoints/best.pt\n`;
   syncDependencyCheckpoints();
   assert.equal($('#familyCurriculum').value,mode);
-  assert.match($('#familyCurriculum').innerHTML,/gene_transition/);
-  assert.doesNotMatch($('#familyCurriculum').innerHTML,/value="full"|value="basics"|value="transition"/);
+  assert.match($('#familyCurriculumHint').textContent,/family stays fixed/);
+
   assert.match($('#dependencyCheckpoint').innerHTML,/conifer_genes|specialist/);
-  assert.doesNotMatch($('#dependencyCheckpoint').innerHTML,/basic_families|outdated|legacy/);
+  assert.match($('#dependencyCheckpoint').innerHTML,/basic_families/);
+  assert.doesNotMatch($('#dependencyCheckpoint').innerHTML,/outdated|legacy/);
   assert.equal($('#dependencyCheckpoint').value,'runs/conifer_genes/checkpoints/best.pt');
+  setDependencyCheckpoint('runs/basic_families/checkpoints/best.pt');
+  assert.match($('#familyCurriculumHint').textContent,/all four families/);
+  setDependencyCheckpoint('runs/specialist/checkpoints/best.pt');
+  assert.match($('#familyCurriculumHint').textContent,/family stays fixed/);
 }
+$('#editor').value='family_curriculum: basics\n';
+syncDependencyCheckpoints();
+assert.doesNotMatch($('#dependencyCheckpoint').innerHTML,/conifer_genes/);
 kind='specialist';$('#configSelect').value='tree_specialist.yaml';
 syncDependencyCheckpoints();
 assert.equal($('#familyCurriculumField').hidden,true);
@@ -496,8 +504,8 @@ def test_full_presets_precede_smoke_presets_and_missing_dependencies_are_blocked
     monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
     names = list(CONFIGS)
     assert names[0] == "full_experiment.yaml"
-    assert names[1:7] == [
-        "tree_specialist.yaml", "tree_genes.yaml", "tree_family.yaml", "tree_regeneration.yaml",
+    assert names[1:6] == [
+        "tree_specialist.yaml", "tree_family.yaml", "tree_regeneration.yaml",
         "tree_environment.yaml", "tree_ecology.yaml",
     ]
     assert all(name.startswith("smoke_") for name in names[-10:])
@@ -594,7 +602,9 @@ def test_dashboard_serves_configs_runs_and_blocks_traversal(tmp_path):
         assert "Learn the basic families only" in root and "Learn variation only" in root
         assert "Learn live family transitions" in root
         assert '<option value="gene_transition">Learn live gene transitions</option>' in root
-        assert "models:['tree_specialist','tree_family']" in root
+        assert "models:['tree_specialist','tree_family','tree_gene']" in root
+        assert "Single-tree genes" not in root
+        assert "tree_genes.yaml" not in CONFIGS
         assert "'tree_regeneration.yaml':{key:'resume'" in root
         assert "'tree_environment.yaml':{key:'resume'" in root
         assert "'tree_ecology.yaml':{key:'checkpoint'" in root

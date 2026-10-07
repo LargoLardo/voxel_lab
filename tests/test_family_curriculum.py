@@ -388,7 +388,7 @@ def test_phase_two_checkpoint_handoffs_and_full_curriculum_validation(tmp_path, 
         "validation_mutation_count": 0, "validation_boundary_genes": [],
     }
     source = specialist
-    for mode in ("gene_transition", "basics", "variation", "gene_transition", "transition", "basics", "full"):
+    for mode in ("basics", "variation", "gene_transition", "transition", "basics", "full"):
         run = train({
             **config, "run_name": f"from_{source.parent.name}_{mode}", "family_curriculum": mode,
             "transition_source_steps": 2,
@@ -396,6 +396,7 @@ def test_phase_two_checkpoint_handoffs_and_full_curriculum_validation(tmp_path, 
         }, dimensions=3, conditional=True)
         source = run / "checkpoints" / "latest.pt"
         payload = torch.load(source, map_location="cpu", weights_only=False)
+        assert payload["metadata"]["model_kind"] == "tree_family"
         assert payload["step"] == 4  # Each handoff starts its own update budget.
         assert set(payload["pool"]["genomes"][:, :4].argmax(1).tolist()) == {0, 1, 2, 3}
         assert {int(value["step"]) for value in payload["optimizer"]["state"].values()} == {4}

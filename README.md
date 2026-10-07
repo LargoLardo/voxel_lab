@@ -162,11 +162,14 @@ Ecology can route either one shared checkpoint with different genomes or separat
 
 The Specialist stage can train branching, conifer, broad-canopy, or weeping trees independently. Choose **Specialist tree type** in the dashboard, or set `tree_genome.family` in `configs/tree_specialist.yaml`.
 
-Use `configs/tree_genes.yaml` to train that specialist's genes directly. Set `initialize_from_checkpoint` to its checkpoint, then choose `family_curriculum: variation` for growth with varied genes or `gene_transition` for live edits to an existing tree. No all-family training or family checkpoint is required. The source checkpoint supplies the tree type, hidden layers, state channels, fire rate, and environment inputs unless explicitly overridden. Hidden layers and state channels must match; changing the tree type is rejected.
+Use the existing **Tree genome family** preset (`configs/tree_family.yaml`) and select **Learn variation only** or **Learn live gene transitions**. The input checkpoint determines the scope automatically:
 
-This path retains the specialist's single update network, adding initially zero-weight genome inputs so conversion preserves its growth rule. Only that tree type appears in paired training and validation, and its tree type stays locked in the checkpoint viewer while genes and styles remain editable. The default pool has 16 organisms (eight gene pairs), versus 64 for all-family training. The paired losses and live-edit rehearsal are shared with the existing curricula.
+- A specialist or a specialist-derived gene checkpoint trains only its tree type. Its family stays fixed in training, validation, and the viewer; genes and styles remain editable.
+- A family checkpoint continues training across all four tree types and retains its family and gene controls.
 
-Variation and live-gene checkpoints can initialize each other using `initialize_from_checkpoint`, which starts a new optimizer and schedule. Use `resume` only to continue the same curriculum with its saved optimizer, pool, and progress. `tree_family.yaml` retains the all-family curricula and separate family-switch training; single-tree gene checkpoints are not interchangeable with that architecture.
+These two curricula inherit the input checkpoint's hidden layers, state channels, fire rate, and environment inputs, overriding preset architecture defaults. Specialist conversion preserves the original growth rule by adding initially zero-weight genome inputs. No separate gene preset or all-family training stage is needed. With `pool_size: 0`, the pool contains 16 organisms for specialist gene training and 64 for all-family training (or more if required by the batch size).
+
+Variation and live-gene checkpoints can initialize each other using `initialize_from_checkpoint`, which starts a new optimizer and schedule. Use `resume` only to continue the same curriculum with its saved optimizer, pool, and progress. Basic families, the full curriculum, and live family transitions retain their all-family behavior. Live gene transitions keep family fixed within each paired gene edit; live family transitions remain the curriculum for learning family switches.
 
 ## Persistence and the Variant Archive
 

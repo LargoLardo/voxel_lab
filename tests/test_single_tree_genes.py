@@ -31,7 +31,9 @@ def test_each_specialist_trains_variation_and_live_gene_edits(tmp_path, family):
     source_checkpoint = source / 'checkpoints/latest.pt'
     for mode in ('variation', 'gene_transition'):
         run = train({
-            **base, 'run_name': mode, 'model_kind': 'tree_gene',
+            **base, 'run_name': mode, 'model_kind': 'tree_family',
+            # Shared preset defaults must yield to the selected checkpoint.
+            'hidden_channels': 8, 'hidden_layers': [64], 'environment_conditioning': True,
             'family_curriculum': mode, 'initialize_from_checkpoint': str(source_checkpoint),
         }, dimensions=3, conditional=True)
         payload = torch.load(run / 'checkpoints/latest.pt', map_location='cpu', weights_only=False)
@@ -63,12 +65,12 @@ def test_each_specialist_trains_variation_and_live_gene_edits(tmp_path, family):
             lab.set_tree_genome(TreeGenome(family=TREE_FAMILIES[(TREE_FAMILIES.index(family) + 1) % 4]).to_dict())
     if family == 'branching':
         handoff = train({
-            **base, 'run_name': 'handoff', 'model_kind': 'tree_gene',
+            **base, 'run_name': 'handoff', 'model_kind': 'tree_family',
             'family_curriculum': 'gene_transition',
             'initialize_from_checkpoint': str(tmp_path / 'variation/checkpoints/latest.pt'),
         }, dimensions=3, conditional=True)
         resumed = train({
-            **base, 'run_name': 'resumed', 'model_kind': 'tree_gene',
+            **base, 'run_name': 'resumed', 'model_kind': 'tree_family',
             'family_curriculum': 'gene_transition', 'iterations': 1,
             'resume': str(handoff / 'checkpoints/latest.pt'),
         }, dimensions=3, conditional=True)
@@ -101,7 +103,7 @@ def test_gene_training_rejects_wrong_families_and_family_curricula(tmp_path):
         'model_kind': 'tree_specialist', 'tree_genome': {'family': 'conifer'},
     })
     with pytest.raises(ValueError, match='specializes in conifer'):
-        train({'model_kind': 'tree_gene', 'initialize_from_checkpoint': str(path),
+        train({'model_kind': 'tree_family', 'family_curriculum': 'variation', 'initialize_from_checkpoint': str(path),
                'tree_genome': {'family': 'weeping'}}, dimensions=3, conditional=True)
     for mode in ('full', 'basics', 'transition'):
         with pytest.raises(ValueError, match='variation or gene_transition'):

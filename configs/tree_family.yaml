@@ -5,6 +5,8 @@ conditional: true
 environment_conditioning: true
 initialize_from_checkpoint: runs/tree_specialist/checkpoints/best.pt
 # full: basics then variation; basics / variation / transition / gene_transition: only that part.
+# variation and gene_transition follow the input checkpoint: one tree type for
+# a specialist, all four for a family model. Architecture is inherited.
 family_curriculum: full
 # Both transition modes grow the source before switching, retaining its voxel state.
 transition_source_steps: 128
@@ -23,7 +25,7 @@ model_width: 64
 fire_rate: 0.5
 iterations: 8000
 rollout_steps: [24, 48]
-pool_size: 64
+pool_size: 0  # Auto: 16 for a specialist's genes, 64 for all families.
 fresh_fraction: 0.25
 learning_rate: 0.0003
 gradient_clip: 1.0
