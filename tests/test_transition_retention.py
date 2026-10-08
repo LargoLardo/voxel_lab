@@ -216,3 +216,50 @@ def test_legacy_resume_does_not_leave_an_unchecked_best_advertised(tmp_path, mon
     latest = torch.load(run / "checkpoints/latest.pt", weights_only=False)
     assert latest["step"] == 3 and not latest["validation"]["retention"]["eligible"]
     assert latest["validation"]["best_worst_genome_persistence_score"] is None
+
+
+def test_target_upgrade_remeasures_retention_and_archives_stale_best(tmp_path, monkeypatch):
+    from morphovoxel.targets.targets_3d import TREE_TARGET_VERSION
+    from morphovoxel.validation import ValidationReport, ValidationTrial
+
+    calls = []
+    def validation(model, panel, **kwargs):
+        calls.append(panel[0].category)
+        return ValidationReport(tuple(ValidationTrial(
+            case, 1, 1, True, False, 0., ("state_bound",),
+            dict(target_iou=.7, material_accuracy=.8, late_drift=0., finite_state=1.), {},
+        ) for case in panel))
+    monkeypatch.setattr(trainer, "validate_panel", validation)
+    config = dict(run_name="upgrade", runs_root=str(tmp_path), model_kind="tree_family", family_curriculum="variation",
+                  device="cpu", world_size=12, batch_size=2, pool_size=8, materials=4, hidden_channels=1, model_width=4,
+                  fire_rate=1, iterations=1, rollout_steps=1, persistence_steps=1,
+                  validation_steps=1, validation_recovery_steps=1, validation_every=1,
+                  validation_fire_seeds=[71], family_style_seeds=[0])
+    run = trainer.train(config, dimensions=3, conditional=True)
+    path = run / "checkpoints/latest.pt"
+    payload = torch.load(path, weights_only=False)
+    payload["metadata"]["target_generator_version"] = 4
+    state = payload["transition_state"]
+    state["best_rank"] = [1., 1.]
+    state["retention"]["settings"].pop("target_generator_version")
+    for value in state["retention"]["baseline"].values():
+        value["target_iou"] = .99
+    for pool in [payload["pool"], *state["pools"].values()]:
+        pool["target_occupancy"].fill_(-99)
+        pool["ages"].fill_(100_000)
+    torch.save(payload, path)
+    torch.save(payload, run / "checkpoints/best.pt")
+    calls.clear()
+    trainer.train({**config, "resume": str(path)}, dimensions=3, conditional=True)
+    updated = torch.load(path, weights_only=False)
+    assert calls.count("neutral") == 2  # Original baseline and current retention.
+    assert updated["step"] == 2
+    assert {int(value["step"]) for value in updated["optimizer"]["state"].values()} == {2}
+    for pool in [updated["pool"], *updated["transition_state"]["pools"].values()]:
+        assert pool["target_occupancy"].min() >= 0 and pool["ages"].max() < 100_000
+    guard = updated["transition_state"]["retention"]
+    assert guard["settings"]["target_generator_version"] == TREE_TARGET_VERSION
+    assert all(value["target_iou"] == .7 for value in guard["baseline"].values())
+    torch.testing.assert_close(updated["transition_state"]["base_reference"], state["base_reference"])
+    assert len(list(path.parent.glob("best_before_targets_1_*.pt"))) == 1
+    assert torch.load(path.parent / "best.pt", weights_only=False)["step"] == 2

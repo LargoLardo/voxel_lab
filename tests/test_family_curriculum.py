@@ -98,8 +98,9 @@ def test_counterfactual_samples_enforce_minimum_positive_branch_and_leaf_masks()
         assert bool(((counts == 0) | (counts >= minimum)).all())
 
 
-def test_variation_refresh_recovers_when_conifer_gene_endpoints_have_tiny_masks(caplog):
-    # Actual failure at update 3140 of the 8000-update variation run.
+def test_variation_refresh_handles_previously_disconnected_conifer_targets():
+    # Actual failure at update 3140 of the 8000-update variation run. Connected
+    # voxelization now allows these endpoints without an interior fallback.
     config = {"family_curriculum": "variation"}
     values = curriculum_values(3139, 8000, config)
     options = dict(
@@ -107,15 +108,13 @@ def test_variation_refresh_recovers_when_conifer_gene_endpoints_have_tiny_masks(
         minimum_branch_voxels=8, minimum_leaf_voxels=8,
         **curriculum_sampling_options(values, config),
     )
-    with caplog.at_level("INFO"):
-        data = sample_counterfactual_family_data(1, 16, 13181, **options)
+    data = sample_counterfactual_family_data(1, 16, 13181, **options)
     repeated = sample_counterfactual_family_data(1, 16, 13181, **options)
-    assert "Using interior conifer/branch_length gene values" in caplog.text
     torch.testing.assert_close(data.model_genomes, repeated.model_genomes)
     low, high = data.genomes
     assert low.family == high.family == "conifer" and low.style_seed == high.style_seed
     assert low.with_values({"branch_length": high.value("branch_length")}) == high
-    assert -values["genome_span"] < low.value("branch_length") < high.value("branch_length") < values["genome_span"]
+    assert -values["genome_span"] <= low.value("branch_length") < high.value("branch_length") <= values["genome_span"]
     assert data.condition_ids.tolist() == [12, 12] and data.pair_ids.tolist() == [0, 0]
     torch.testing.assert_close(data.environments[0], data.environments[1])
     from morphovoxel.targets import make_tree_target
@@ -134,18 +133,18 @@ def test_variation_refresh_recovers_when_conifer_gene_endpoints_have_tiny_masks(
 def test_fixed_family_styles_reject_conflicting_limits_before_any_training(tmp_path, monkeypatch):
     from morphovoxel.training import trainer
     from morphovoxel.training.family import validate_family_styles
-    # At 12^3, this fixed conifer style always has seven branch voxels; retrying
-    # or switching to it later cannot satisfy the configured eight-voxel minimum.
+    # At 12^3, this fixed conifer style has eight branch voxels; retrying
+    # or switching to it later cannot satisfy a nine-voxel minimum.
     style = {"family_style_seeds": [1941611]}
     monkeypatch.setattr(trainer, "rollout", lambda *args, **kwargs: pytest.fail("training started before validation"))
-    with pytest.raises(ValueError, match="conifer style_seed=1941611.*7 branch voxels"):
+    with pytest.raises(ValueError, match="conifer style_seed=1941611.*8 branch voxels"):
         train({
             **style, "family_curriculum": "transition", "model_kind": "tree_family",
             "runs_root": str(tmp_path), "device": "cpu", "world_size": 12,
-            "batch_size": 2, "minimum_branch_voxels": 8, "minimum_leaf_voxels": 8,
+            "batch_size": 2, "minimum_branch_voxels": 9, "minimum_leaf_voxels": 8,
         }, dimensions=3, conditional=True)
     validate_family_styles(12, {"family_style_seeds": [0]}, 8, 8)
-    validate_family_styles(12, style, 7, 8)
+    validate_family_styles(12, style, 8, 8)
     validate_family_styles(16, style, 8, 8)
 
 
@@ -435,7 +434,8 @@ def test_phase_two_checkpoint_handoffs_and_full_curriculum_validation(tmp_path, 
     assert set(pd.read_csv(resumed / "logs.csv").curriculum_stage) == {"variation"}
 
 
-def test_resuming_old_wind_targets_rebuilds_pool_without_resetting_optimizer(tmp_path):
+@pytest.mark.parametrize("target_version", [3, 4])
+def test_resuming_old_targets_rebuilds_pool_without_resetting_optimizer(tmp_path, target_version):
     config = {
         "runs_root": str(tmp_path), "model_kind": "tree_family", "device": "cpu",
         "world_size": 12, "batch_size": 2, "pool_size": 2, "materials": 4,
@@ -445,7 +445,7 @@ def test_resuming_old_wind_targets_rebuilds_pool_without_resetting_optimizer(tmp
     original = train({**config, "run_name": "original"}, dimensions=3, conditional=True)
     source = original / "checkpoints" / "latest.pt"
     payload = torch.load(source, map_location="cpu", weights_only=False)
-    payload["metadata"]["target_generator_version"] = 3
+    payload["metadata"]["target_generator_version"] = target_version
     # Stale targets/ages must never enter the resumed training pool.
     payload["pool"]["target_occupancy"].fill_(-99)
     payload["pool"]["ages"].fill_(100_000)

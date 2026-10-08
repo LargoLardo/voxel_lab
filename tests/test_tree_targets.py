@@ -6,6 +6,41 @@ from morphovoxel.genomes import TREE_FAMILIES, TreeGenome
 from morphovoxel.targets import make_tree_target
 
 
+@pytest.mark.parametrize("start,end", [
+    ((4.5, 8.5, 8.5), (10.5, 8.5, 8.5)),
+    ((2.5, 2.5, 2.5), (10.5, 10.5, 10.5)),
+    ((10.5, 2.5, 8.5), (2.5, 10.5, 4.5)),
+    ((-3., 8.5, 8.5), (19., 8.5, 8.5)),
+    ((4.5, 8.5, 8.5), (4.5, 8.5, 8.5)),
+])
+def test_thin_segments_are_face_connected_at_fractional_coordinates(start, end):
+    from morphovoxel.targets.targets_3d import _segment, _seed_component
+
+    mask = np.zeros((16, 16, 16), dtype=bool)
+    _segment(mask, start, end, .5, connected=True)
+    assert mask.any()
+    np.testing.assert_array_equal(_seed_component(mask, tuple(np.argwhere(mask)[0])), mask)
+    reverse = np.zeros_like(mask)
+    _segment(reverse, end, start, .5, connected=True)
+    np.testing.assert_array_equal(reverse, mask)
+
+
+def test_unobstructed_thin_trees_do_not_lose_disconnected_foliage(monkeypatch):
+    from morphovoxel.targets import targets_3d
+
+    cleanup = targets_3d._seed_component
+    def check_connected(mask, seed):
+        kept = cleanup(mask, seed)
+        np.testing.assert_array_equal(kept, mask)
+        return kept
+    monkeypatch.setattr(targets_3d, "_seed_component", check_connected)
+    for family in TREE_FAMILIES:
+        for seed in range(500, 532):
+            genome = TreeGenome.random(seed, family=family, locked=["light_tropism"])
+            occupancy, materials = make_tree_target(genome, 16)
+            assert occupancy.any() and (materials == 3).any()
+
+
 def test_tree_genomes_make_distinct_reproducible_semantic_targets():
     short = TreeGenome(family="branching").with_values({"height": -1, "canopy_spread": -1})
     tall = TreeGenome(family="branching").with_values({"height": 1, "canopy_spread": 1})

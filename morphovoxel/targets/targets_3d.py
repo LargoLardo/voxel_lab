@@ -10,10 +10,10 @@ from ..environment import ENVIRONMENT_CHANNELS, EnvironmentSpec, make_environmen
 from ..genomes import TreeGenome
 
 TARGETS_3D = ("branching", "conical", "radial", "mushroom", "dome")
-TREE_TARGET_VERSION = 4
-# Version 3 has the same genome/model layout. Its weights still load, but
-# training must replace pooled targets that used the old wind calculation.
-TREE_TARGET_COMPATIBLE_VERSIONS = (3, TREE_TARGET_VERSION)
+TREE_TARGET_VERSION = 5
+# Earlier versions share the model layout, but their pooled targets and
+# validation scores must be rebuilt when training resumes.
+TREE_TARGET_COMPATIBLE_VERSIONS = (3, 4, TREE_TARGET_VERSION)
 
 
 @lru_cache(maxsize=16)
@@ -29,11 +29,37 @@ def _ball(mask: np.ndarray, z: float, y: float, x: float, radius: float) -> None
     mask[(zz - z) ** 2 + (yy - y) ** 2 + (xx - x) ** 2 <= radius**2] = True
 
 
-def _segment(mask: np.ndarray, start: tuple[float, float, float], end: tuple[float, float, float], radius: float) -> None:
+def _centerline(mask: np.ndarray, start, end) -> None:
+    """Rasterize a face-connected path through voxel cells, including thin lines."""
+    # Canonical direction makes boundary-tie choices independent of traversal.
+    start, end = sorted((tuple(start), tuple(end)))
+    start, end = np.asarray(start), np.asarray(end)
+    cell, last = np.floor(start + .5).astype(int), np.floor(end + .5).astype(int)
+    direction = np.sign(end - start).astype(int)
+    distance = np.abs(end - start)
+    delta = np.divide(1., distance, out=np.full(3, np.inf), where=distance > 0)
+    boundary = cell + direction * .5
+    crossing = np.divide(np.abs(boundary - start), distance,
+                         out=np.full(3, np.inf), where=distance > 0)
+    while True:
+        if np.all((cell >= 0) & (cell < mask.shape)):
+            mask[tuple(cell)] = True
+        if np.array_equal(cell, last):
+            break
+        # At a corner, take one face at a time. Never step past an endpoint
+        # lying exactly on a voxel boundary in the negative direction.
+        axis = int(np.argmin(np.where(cell != last, crossing, np.inf)))
+        cell[axis] += direction[axis]
+        crossing[axis] += delta[axis]
+
+
+def _segment(mask: np.ndarray, start: tuple[float, float, float], end: tuple[float, float, float], radius: float, *, connected: bool = False) -> None:
     offset = np.subtract(end, start)
     distance = np.linalg.norm(offset)
     for t in np.linspace(0, 1, max(2, int(distance * 2))):
         _ball(mask, *(np.add(start, offset * t)), radius)
+    if connected:
+        _centerline(mask, start, end)
 
 
 def make_target_3d(kind: str, size: int = 32, seed: int = 0, **params) -> tuple[np.ndarray, np.ndarray]:
@@ -149,6 +175,7 @@ def make_tree_target(
     for fraction in np.linspace(0, 1, max(4, int(height * 2))):
         point = center + (top - center) * fraction
         _ball(trunk, *point, max(0.55, thickness * (1 - taper * fraction * 0.72)))
+    _centerline(trunk, center, top)
 
     density = _normalized(genome, "branch_density")
     branch_count = max(3, round((4 + density * 9) * (0.8 + 0.2 * environment.energy)))
@@ -191,10 +218,10 @@ def make_tree_target(
         # Give asymmetry a direct signed spatial meaning instead of relying on
         # subtle branch-length weighting that vanished after voxelization.
         end += np.array((0.0, math.sin(family_angle), math.cos(family_angle))) * asymmetry * size * 0.08
-        _segment(branches, tuple(start), tuple(end), max(0.5, thickness * 0.55))
+        _segment(branches, tuple(start), tuple(end), max(0.5, thickness * 0.55), connected=True)
         if genome.family == "weeping":
             droop = end + np.array((length * (0.6 + 0.35 * _normalized(genome, "branch_inclination")), 0, 0))
-            _segment(branches, tuple(end), tuple(droop), 0.5)
+            _segment(branches, tuple(end), tuple(droop), 0.5, connected=True)
             end = droop
         leaf_radius = max(0.75, thickness * 0.6 + spread * (0.45 + 0.35 * allocation))
         _ball(leaves, *end, leaf_radius)
@@ -209,7 +236,7 @@ def make_tree_target(
     for index in range(root_count):
         angle = family_angle + index * 2 * np.pi / root_count
         end = center + np.array((min(1.0, size - 1 - center[0]), math.sin(angle) * root_length, math.cos(angle) * root_length)) + water_bias
-        _segment(roots, tuple(center), tuple(end), max(0.5, thickness * 0.48))
+        _segment(roots, tuple(center), tuple(end), max(0.5, thickness * 0.48), connected=True)
 
     occupancy = trunk | branches | leaves | roots
     context = make_environment_context(environment, size)

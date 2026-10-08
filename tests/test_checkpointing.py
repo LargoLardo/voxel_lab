@@ -59,7 +59,7 @@ def test_missing_checkpoint_explains_prerequisite(tmp_path):
 
 
 @pytest.mark.parametrize("kind", ["tree_specialist", "tree_family"])
-@pytest.mark.parametrize("target_version", [3, TREE_TARGET_VERSION])
+@pytest.mark.parametrize("target_version", [3, 4, TREE_TARGET_VERSION])
 def test_family_initialization_preserves_checkpoint_weights(tmp_path, kind, target_version):
     destination = TreeFamilyNCA3D(6, 8, TreeGenome.model_size(), 1, len(ENVIRONMENT_CHANNELS))
     source = NeuralCA3D(6, 8, 0, 1) if kind == "tree_specialist" else TreeFamilyNCA3D(6, 8, TreeGenome.model_size(), 1, len(ENVIRONMENT_CHANNELS))

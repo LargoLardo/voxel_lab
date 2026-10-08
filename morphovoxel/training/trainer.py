@@ -478,6 +478,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     optimizer = optimizer_class(model.parameters(), lr=float(config.get("learning_rate", 1e-3)))
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, **config["scheduler"]) if config.get("scheduler") else None
     start, restored = 0, None
+    targets_changed = False
     if config.get("resume"):
         restored = load_checkpoint(
             config["resume"],
@@ -490,8 +491,9 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         start = int(restored["step"])
         _restore_rng_state(restored.get("rng"))
         if (tree_conditioned or tree_specialist) and restored["metadata"]["target_generator_version"] != TREE_TARGET_VERSION:
+            targets_changed = True
             config["reset_pool_on_resume"] = True
-            LOGGER.info("Rebuilding the training pool for corrected wind targets; keeping model and optimizer state")
+            LOGGER.info("Rebuilding pools and validation baselines for corrected tree targets; keeping model and optimizer state")
         if phase_two and config.get("family_curriculum") != (restored.get("config") or {}).get("family_curriculum"):
             raise ValueError("use initialize_from_checkpoint to switch Phase 2 curricula instead of resume")
     curriculum_start, curriculum_iterations = start, iterations
@@ -523,6 +525,9 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         if not 0 <= tolerance <= 1:
             raise ValueError("transition_retention_tolerance must be within [0, 1]")
         transition_state = (restored or {}).get("transition_state") or {}
+        if targets_changed:
+            transition_state.pop("retention", None)
+            transition_state.pop("best_rank", None)
         transition_state.setdefault("cursors", {"transition": 0, "neutral": 0, "variation": 0})
         if transition_training and (isinstance(transition_source_steps, bool) or not isinstance(transition_source_steps, int) or transition_source_steps < 1):
             raise ValueError("transition_source_steps must be a positive integer")
@@ -689,16 +694,19 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         old_settings = {key: value for key, value in (incumbent.get("config") or {}).items() if key not in run_options}
         new_settings = {key: value for key, value in config.items() if key not in run_options}
         old_validation = incumbent.get("validation") or {}
+        old_targets = ((tree_conditioned or tree_specialist)
+                       and incumbent["metadata"]["target_generator_version"] != TREE_TARGET_VERSION)
         # Scores without the same original-growth baseline are not comparable.
-        comparable = (not rehearsal_training or (
+        comparable = not old_targets and (not rehearsal_training or (
             (incumbent.get("transition_state") or {}).get("retention") == transition_state.get("retention")
             and "retention" in old_validation))
-        if rehearsal_training and validation_steps > 0 and "retention" not in old_validation and curriculum_values(
+        if old_targets or (rehearsal_training and validation_steps > 0 and "retention" not in old_validation and curriculum_values(
             start - curriculum_start, curriculum_iterations, config,
-        )["curriculum_stage"] != "basics":
+        )["curriculum_stage"] != "basics"):
             # A legacy best may already have forgotten the base. Preserve it for
             # manual inspection without advertising it as a guarded best.
-            backup = best_checkpoint.with_name(f"best_before_retention_{incumbent['step']}_{time.time_ns()}.pt")
+            reason = "targets" if old_targets else "retention"
+            backup = best_checkpoint.with_name(f"best_before_{reason}_{incumbent['step']}_{time.time_ns()}.pt")
             best_checkpoint.rename(backup)
             LOGGER.info("Preserved unchecked best checkpoint as %s", backup)
         if old_settings == new_settings and old_validation and comparable:
@@ -745,6 +753,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 ),
             )
             retention_settings = {
+                "target_generator_version": TREE_TARGET_VERSION,
                 "panel": [case.to_dict() for case in retention_cases],
                 **{key: value for key, value in retention_options.items() if key not in {"layout", "device", "criteria"}},
                 "criteria": retention_options["criteria"].to_dict(), "tolerance": tolerance,
