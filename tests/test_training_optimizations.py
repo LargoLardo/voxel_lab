@@ -12,12 +12,34 @@ from morphovoxel.rollout import rollout
 from morphovoxel.state import StateLayout
 from morphovoxel.targets import make_tree_target
 from morphovoxel.training.family import family_style_seeds
-from morphovoxel.training.losses import _soft_overlap, morphology_loss, prepare_morphology_targets
+from morphovoxel.training.losses import _soft_overlap, counterfactual_loss, morphology_loss, prepare_morphology_targets
 
 
 DEVICES = ["cpu", pytest.param("mps", marks=pytest.mark.skipif(
     not torch.backends.mps.is_available(), reason="Apple GPU unavailable",
 ))]
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_paired_and_peak_losses_match_cpu_gradients(device):
+    torch.manual_seed(62)
+    layout = StateLayout(4, 2)
+    initial = torch.randn(4, layout.channels, 4, 4, 4) * 5
+    target = torch.zeros(4, 4, 4, 4)
+    target[:, :2] = 1
+    target[1, 2] = 1
+    material = torch.ones_like(target, dtype=torch.long)
+    material[1, 0] = 3
+    results = []
+    for backend in ("cpu", device):
+        state = initial.to(backend).detach().requires_grad_()
+        wanted, labels = target.to(backend), material.to(backend)
+        _, components = morphology_loss(state, wanted, labels, layout)
+        loss = components["magnitude"] + counterfactual_loss(state, wanted, layout, labels)
+        loss.backward()
+        results.append((loss.detach().cpu(), state.grad.cpu()))
+    for actual, expected in zip(results[1], results[0]):
+        torch.testing.assert_close(actual, expected)
 
 
 @pytest.mark.parametrize("device", DEVICES)

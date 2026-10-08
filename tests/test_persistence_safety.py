@@ -91,7 +91,23 @@ def test_magnitude_penalty_covers_occupancy_material_and_hidden_channels():
 
     _, components = morphology_loss(state, target, material, layout, state_limit=4)
 
-    assert components["magnitude"].item() == pytest.approx(3 / layout.channels)
+    assert components["magnitude"].item() == pytest.approx(1 + 3 / layout.channels)
+
+
+@pytest.mark.parametrize("size", [4, 16])
+def test_sparse_state_spikes_keep_a_strong_gradient(size):
+    layout = StateLayout(materials=2, hidden=2)
+    state = torch.zeros(2, layout.channels, size, size)
+    state[0, -1, 0, 0] = 6
+    state.requires_grad_()
+    target = torch.zeros(2, size, size)
+    _, components = morphology_loss(state, target, target.long(), layout)
+    components["magnitude"].backward()
+    assert components["magnitude"] >= 2
+    assert state.grad[0, -1, 0, 0] >= 2
+    assert not state.grad[1].any()
+    _, bounded = morphology_loss(state.detach().clamp(-4, 4), target, target.long(), layout)
+    assert bounded["magnitude"] == 0
 
 
 def test_sparse_foreground_is_not_diluted_by_empty_background():

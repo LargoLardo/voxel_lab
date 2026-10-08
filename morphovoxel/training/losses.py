@@ -148,13 +148,16 @@ def morphology_loss(
     background_error = (squared_error * background).sum(1) / targets.background_count.clamp_min(1)
     prediction = occupancy.clamp(0, 1)
     soft_dice, soft_iou = _soft_overlap(prediction, target)
+    state_excess = F.relu(state.abs() - state_limit).square().flatten(1)
     components = {
         # Equal foreground/background weighting prevents sparse 3D trees from
         # making an empty or averaged organism look deceptively inexpensive.
         "occupancy": ((foreground_error + background_error) * 0.5).mean(),
         "leakage": (occupancy * (1 - target)).square().mean(),
         "occupancy_range": (F.relu(-occupancy).square() + F.relu(occupancy - 1).square()).mean(),
-        "magnitude": F.relu(state.abs() - state_limit).square().mean(),
+        # Keep pressure on widespread violations and each organism's worst
+        # spike: averaging alone hides isolated unstable voxels/channels.
+        "magnitude": state_excess.mean() + state_excess.amax(1).mean(),
         "soft_dice": soft_dice,
         "soft_iou": soft_iou,
         "distance": (prediction * (1 - target) * targets.distance).mean(),
@@ -173,18 +176,37 @@ def morphology_loss(
     return total, components
 
 
-def counterfactual_loss(state: torch.Tensor, occupancy_target: torch.Tensor, layout: StateLayout) -> torch.Tensor:
-    """Match signed target changes without diluting sparse changes over the world."""
+def counterfactual_loss(
+    state: torch.Tensor, occupancy_target: torch.Tensor, layout: StateLayout,
+    material_target: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Match signed occupancy changes and material swaps on affected voxels."""
     if len(state) < 2 or len(state) % 2 or len(occupancy_target) != len(state):
         raise ValueError("counterfactual loss requires adjacent even-sized pairs")
-    occupancy = state[:, layout.occupancy].clamp(0, 1)
+    # Raw values preserve gradients outside [0, 1]. Individual occupancy and
+    # range losses still anchor both members rather than just their difference.
+    occupancy = state[:, layout.occupancy]
     target = occupancy_target.to(occupancy)
     predicted_change = occupancy[1::2] - occupancy[0::2]
     target_change = target[1::2] - target[0::2]
     changed = target_change.abs() > 1e-6
     errors = (predicted_change - target_change).abs().flatten(1)
     changed = changed.flatten(1)
-    return ((errors * changed).sum(1) / changed.sum(1).clamp_min(1)).mean()
+    loss = ((errors * changed).sum(1) / changed.sum(1).clamp_min(1)).mean()
+    if material_target is not None:
+        if material_target.shape != occupancy_target.shape:
+            raise ValueError("counterfactual material targets must match occupancy targets")
+        labels = material_target.to(device=state.device, dtype=torch.long)
+        # Occupancy changes are covered above; this term teaches semantic swaps
+        # within shared foreground, even when the silhouettes are identical.
+        swapped = ((target[::2] > .5) & (target[1::2] > .5) & (labels[::2] != labels[1::2])).flatten(1)
+        probabilities = state[:, layout.material_slice].softmax(1)
+        change = probabilities[1::2] - probabilities[::2]
+        source_change = change.gather(1, labels[::2, None]).squeeze(1)
+        destination_change = change.gather(1, labels[1::2, None]).squeeze(1)
+        errors = .5 * ((source_change + 1).abs() + (destination_change - 1).abs()).flatten(1)
+        loss = loss + ((errors * swapped).sum(1) / swapped.sum(1).clamp_min(1)).mean()
+    return loss
 
 
 def stability_loss(state: torch.Tensor, continued_state: torch.Tensor) -> torch.Tensor:

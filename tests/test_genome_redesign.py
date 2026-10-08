@@ -209,6 +209,41 @@ def test_counterfactual_loss_is_not_diluted_by_world_volume():
     assert loss_for(4) == 1
 
 
+@pytest.mark.parametrize("value", [-2., 3.])
+def test_counterfactual_loss_preserves_gradients_outside_occupancy_range(value):
+    layout = StateLayout(4, 1)
+    target = torch.zeros(2, 2, 2)
+    target[1, 0, 0] = 1
+    state = torch.zeros(2, layout.channels, 2, 2)
+    state[:, 0] = value
+    state.requires_grad_()
+    counterfactual_loss(state, target, layout).backward()
+    assert state.grad[0, 0, 0, 0] > 0
+    assert state.grad[1, 0, 0, 0] < 0
+
+
+@pytest.mark.parametrize("size", [4, 16])
+def test_counterfactual_material_swaps_have_gradients_without_silhouette_changes(size):
+    layout = StateLayout(4, 1)
+    target = torch.ones(2, size, size, size)
+    material = torch.ones_like(target, dtype=torch.long)
+    material[1, 0, 0, 0] = 3
+    state = torch.zeros(2, layout.channels, size, size, size)
+    state[:, 0] = target
+    state.requires_grad_()
+    loss = counterfactual_loss(state, target, layout, material)
+    assert loss.item() == pytest.approx(1.)
+    loss.backward()
+    assert state.grad[0, layout.material_slice.start + 1, 0, 0, 0] < 0
+    assert state.grad[1, layout.material_slice.start + 3, 0, 0, 0] < 0
+    assert not state.grad[:, :, 1:].any()
+    exact = state.detach().clone()
+    exact[:, layout.material_slice].scatter_(1, material[:, None], 20.)
+    assert counterfactual_loss(exact, target, layout, material) < 1e-6
+    # Different labels in empty space carry no material supervision.
+    assert counterfactual_loss(state, target * 0, layout, material) == 0
+
+
 def test_rollout_reuses_each_fire_mask_within_a_pair():
     class Recorder:
         fire_rate = 0.5

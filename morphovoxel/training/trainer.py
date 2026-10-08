@@ -966,7 +966,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             prepared_targets=prepared_targets,
         )
         if tree_conditioned and not basic_batch:
-            components["counterfactual"] = counterfactual_loss(final_state, target, layout)
+            components["counterfactual"] = counterfactual_loss(final_state, target, layout, material)
             loss = loss + float(config.get("counterfactual_weight", 1.0)) * components["counterfactual"]
         committed_state = final_state
         if persistence_steps:
@@ -981,7 +981,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             components.update({f"persistence_{name}": value for name, value in persistence_components.items()})
             loss = loss + float(config.get("persistence_weight", 1.0)) * persistence_loss
             if tree_conditioned and not basic_batch:
-                persistence_counterfactual = counterfactual_loss(committed_state, target, layout)
+                persistence_counterfactual = counterfactual_loss(committed_state, target, layout, material)
                 components["persistence_counterfactual"] = persistence_counterfactual
                 loss = loss + float(config.get("persistence_weight", 1.0)) * float(
                     config.get("counterfactual_weight", 1.0)
