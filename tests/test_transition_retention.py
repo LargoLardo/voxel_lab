@@ -116,6 +116,22 @@ def test_retention_cannot_hide_a_forgotten_family_or_nonfinite_state():
     assert "non-finite" in retention_failures(original, current, .05)[0]
 
 
+def test_checkpoint_rank_includes_gene_response_even_when_strict_scores_tie():
+    from dataclasses import replace
+    from morphovoxel.training.transition import transition_rank
+    from morphovoxel.validation import ValidationReport, ValidationTrial, build_gene_response_panel
+
+    case = build_gene_response_panel(style_seeds=[42], fire_seeds=[71])[0]
+    ignored = ValidationTrial(case, 256, 64, True, False, 0., ("state_bound",),
+                              dict(target_iou=.9, gene_response_edited_voxels=12., gene_response_accuracy=0.), {})
+    responsive = replace(ignored, metrics={**ignored.metrics, "target_iou": .8, "gene_response_accuracy": .7})
+    assert transition_rank(ValidationReport((responsive,))) > transition_rank(ValidationReport((ignored,)))
+    # Rasterization can make a gene pair identical. Such pairs don't get a
+    # perfect-response bonus or a zero-response penalty in checkpoint ranking.
+    skipped = replace(ignored, metrics=dict(target_iou=.9, gene_response_edited_voxels=0.))
+    assert transition_rank(ValidationReport((skipped,))) == (0., .9)
+
+
 def test_variation_rehearses_original_specialist_separately_from_new_styles(tmp_path):
     from morphovoxel.model_3d import NeuralCA3D
 
@@ -218,7 +234,8 @@ def test_legacy_resume_does_not_leave_an_unchecked_best_advertised(tmp_path, mon
     assert latest["validation"]["best_worst_genome_persistence_score"] is None
 
 
-def test_target_upgrade_remeasures_retention_and_archives_stale_best(tmp_path, monkeypatch):
+@pytest.mark.parametrize("upgrade", ["targets", "validation"])
+def test_target_or_validation_upgrade_remeasures_retention_and_archives_stale_best(tmp_path, monkeypatch, upgrade):
     from morphovoxel.targets.targets_3d import TREE_TARGET_VERSION
     from morphovoxel.validation import ValidationReport, ValidationTrial
 
@@ -238,15 +255,19 @@ def test_target_upgrade_remeasures_retention_and_archives_stale_best(tmp_path, m
     run = trainer.train(config, dimensions=3, conditional=True)
     path = run / "checkpoints/latest.pt"
     payload = torch.load(path, weights_only=False)
-    payload["metadata"]["target_generator_version"] = 4
+    if upgrade == "targets":
+        payload["metadata"]["target_generator_version"] = 4
+    else:
+        payload["config"]["tree_validation_version"] = 1
     state = payload["transition_state"]
     state["best_rank"] = [1., 1.]
     state["retention"]["settings"].pop("target_generator_version")
     for value in state["retention"]["baseline"].values():
         value["target_iou"] = .99
-    for pool in [payload["pool"], *state["pools"].values()]:
-        pool["target_occupancy"].fill_(-99)
-        pool["ages"].fill_(100_000)
+    if upgrade == "targets":
+        for pool in [payload["pool"], *state["pools"].values()]:
+            pool["target_occupancy"].fill_(-99)
+            pool["ages"].fill_(100_000)
     torch.save(payload, path)
     torch.save(payload, run / "checkpoints/best.pt")
     calls.clear()
@@ -261,5 +282,5 @@ def test_target_upgrade_remeasures_retention_and_archives_stale_best(tmp_path, m
     assert guard["settings"]["target_generator_version"] == TREE_TARGET_VERSION
     assert all(value["target_iou"] == .7 for value in guard["baseline"].values())
     torch.testing.assert_close(updated["transition_state"]["base_reference"], state["base_reference"])
-    assert len(list(path.parent.glob("best_before_targets_1_*.pt"))) == 1
+    assert len(list(path.parent.glob(f"best_before_{upgrade}_1_*.pt"))) == 1
     assert torch.load(path.parent / "best.pt", weights_only=False)["step"] == 2

@@ -26,7 +26,7 @@ from ..targets import make_target_2d, make_target_3d, make_tree_target
 from ..targets.targets_3d import TREE_TARGET_VERSION
 from ..targets.morphology_library import save_target
 from ..utils import create_run_directory, metadata, steps_per_second, write_json, write_live_preview
-from ..validation import ValidationCase, ValidationCriteria, build_candidate_panel, build_gene_transition_panel, build_transition_panel, build_validation_panel, validate_panel
+from ..validation import VALIDATION_SCHEMA_VERSION, ValidationCase, ValidationCriteria, build_candidate_panel, build_gene_response_panel, build_gene_transition_panel, build_transition_panel, build_validation_panel, validate_panel
 from .losses import _distance_field, counterfactual_loss, morphology_loss, prepare_morphology_targets
 from .family import curriculum_sampling_options, curriculum_values, family_style_seeds, sample_counterfactual_family_data, sample_transition_destinations, validate_family_styles
 from .state_pool import StatePool
@@ -400,6 +400,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         config.setdefault("environment_schema_version", ENVIRONMENT_SCHEMA_VERSION)
         config["target_generator"] = {"name": "procedural_tree", "version": TREE_TARGET_VERSION}
         config["target_generator_version"] = TREE_TARGET_VERSION
+        config["tree_validation_version"] = VALIDATION_SCHEMA_VERSION
     if tree_conditioned:
         config.setdefault(
             "training_genome_ranges",
@@ -478,7 +479,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     optimizer = optimizer_class(model.parameters(), lr=float(config.get("learning_rate", 1e-3)))
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, **config["scheduler"]) if config.get("scheduler") else None
     start, restored = 0, None
-    targets_changed = False
+    targets_changed = validation_changed = False
     if config.get("resume"):
         restored = load_checkpoint(
             config["resume"],
@@ -490,6 +491,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         )
         start = int(restored["step"])
         _restore_rng_state(restored.get("rng"))
+        validation_changed = ((tree_conditioned or tree_specialist)
+                              and (restored.get("config") or {}).get("tree_validation_version") != VALIDATION_SCHEMA_VERSION)
         if (tree_conditioned or tree_specialist) and restored["metadata"]["target_generator_version"] != TREE_TARGET_VERSION:
             targets_changed = True
             config["reset_pool_on_resume"] = True
@@ -525,9 +528,11 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         if not 0 <= tolerance <= 1:
             raise ValueError("transition_retention_tolerance must be within [0, 1]")
         transition_state = (restored or {}).get("transition_state") or {}
-        if targets_changed:
+        if targets_changed or validation_changed:
             transition_state.pop("retention", None)
             transition_state.pop("best_rank", None)
+            if validation_changed and not targets_changed:
+                LOGGER.info("Rebuilding validation baselines for the updated tree validation protocol")
         transition_state.setdefault("cursors", {"transition": 0, "neutral": 0, "variation": 0})
         if transition_training and (isinstance(transition_source_steps, bool) or not isinstance(transition_source_steps, int) or transition_source_steps < 1):
             raise ValueError("transition_source_steps must be a positive integer")
@@ -696,16 +701,18 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         old_validation = incumbent.get("validation") or {}
         old_targets = ((tree_conditioned or tree_specialist)
                        and incumbent["metadata"]["target_generator_version"] != TREE_TARGET_VERSION)
+        old_protocol = ((tree_conditioned or tree_specialist)
+                        and (incumbent.get("config") or {}).get("tree_validation_version") != VALIDATION_SCHEMA_VERSION)
         # Scores without the same original-growth baseline are not comparable.
-        comparable = not old_targets and (not rehearsal_training or (
+        comparable = not (old_targets or old_protocol) and (not rehearsal_training or (
             (incumbent.get("transition_state") or {}).get("retention") == transition_state.get("retention")
             and "retention" in old_validation))
-        if old_targets or (rehearsal_training and validation_steps > 0 and "retention" not in old_validation and curriculum_values(
+        if old_targets or old_protocol or (rehearsal_training and validation_steps > 0 and "retention" not in old_validation and curriculum_values(
             start - curriculum_start, curriculum_iterations, config,
         )["curriculum_stage"] != "basics"):
             # A legacy best may already have forgotten the base. Preserve it for
             # manual inspection without advertising it as a guarded best.
-            reason = "targets" if old_targets else "retention"
+            reason = "targets" if old_targets else "retention" if "retention" not in old_validation else "validation"
             backup = best_checkpoint.with_name(f"best_before_{reason}_{incumbent['step']}_{time.time_ns()}.pt")
             best_checkpoint.rename(backup)
             LOGGER.info("Preserved unchecked best checkpoint as %s", backup)
@@ -1091,6 +1098,10 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                         )
                 if tree_gene:
                     panel = tuple(case for case in panel if case.genome.family == tree_default.family)
+                if phase_two and current_stage == "variation":
+                    panel += tuple(case for case in build_gene_response_panel(
+                        style_seeds=family_style_seeds(config), fire_seeds=fire_seeds,
+                    ) if not tree_gene or case.genome.family == tree_default.family)
                 criteria = ValidationCriteria(
                     min_steps=int(config.get("validation_min_steps", 256)),
                     min_recovery_steps=int(config.get("validation_min_recovery_steps", 64)),
@@ -1124,6 +1135,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                         "step": step + 1,
                         "curriculum_stage": current_stage,
                         "case": trial.case.case_id,
+                        "target_generator_version": TREE_TARGET_VERSION,
+                        "validation_schema_version": VALIDATION_SCHEMA_VERSION,
                         "category": trial.case.category,
                         "family": trial.case.genome.family,
                         "style_seed": trial.case.genome.style_seed,
@@ -1131,6 +1144,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                         **({"source_family": trial.case.source_genome.family,
                             "source_genome": json.dumps(trial.case.source_genome.to_dict(), sort_keys=True),
                             "source_steps": trial.case.source_steps} if trial.case.source_genome is not None else {}),
+                        **({"comparison_genome": json.dumps(trial.case.comparison_genome.to_dict(), sort_keys=True)}
+                           if trial.case.comparison_genome is not None else {}),
                         "environment": json.dumps(trial.case.environment.to_dict(), sort_keys=True),
                         "fire_seed": trial.case.fire_seed,
                         "validation_steps": trial.steps,

@@ -51,6 +51,11 @@ def test_each_specialist_trains_variation_and_live_gene_edits(tmp_path, family):
         if mode == 'gene_transition':
             assert len(panel) == 32
             assert all(case['source_genome']['family'] == family for case in panel)
+        else:
+            response_trials = [trial for trial in payload['validation']['persistence_report']['trials']
+                               if trial['case']['category'] == 'gene_response']
+            assert len(response_trials) == len(FAMILY_GENE_NAMES)
+            assert all('gene_response_edited_voxels' in trial['metrics'] for trial in response_trials)
         lab = LabSession.from_run(run, 'cpu', 'latest.pt')
         assert isinstance(lab.model, NeuralCA3D)
         assert lab.summary()['fixed_tree_family'] == family

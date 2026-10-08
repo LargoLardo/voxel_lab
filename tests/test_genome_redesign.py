@@ -32,7 +32,9 @@ def _gene_descriptor(name, family, occupancy, materials):
     if name == "trunk_thickness":
         return float(len(points))
     if name == "branch_density":
-        return float((materials == 2).sum())
+        # Leaves take material precedence over branches. Include their voxels
+        # so added foliage covering a stem cannot look like reduced density.
+        return float((materials >= 2).sum())
     if name == "branch_inclination":
         mean = float(np.argwhere(materials == 3)[:, 0].mean())
         return mean if family == "weeping" else -mean

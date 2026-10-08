@@ -9,6 +9,7 @@ from morphovoxel.targets import make_tree_target
 from morphovoxel.validation import (
     ValidationCriteria,
     build_candidate_panel,
+    build_gene_response_panel,
     build_gene_transition_panel,
     build_transition_panel,
     build_validation_panel,
@@ -62,6 +63,74 @@ def test_default_variation_validation_checks_every_family_at_both_gene_limits():
         environments=(EnvironmentSpec(),), fire_seeds=(1,),
     )
     assert len(disabled) == len(TREE_FAMILIES)
+
+
+def test_gene_response_panel_covers_all_controls_with_matched_backgrounds():
+    options = dict(style_seeds=[0, 970806], fire_seeds=[41, 42])
+    panel = build_gene_response_panel(**options)
+    assert panel == build_gene_response_panel(**options)
+    assert len(panel) == len({case.case_id for case in panel}) == 32
+    controls = set()
+    for case in panel:
+        low, high = case.comparison_genome, case.genome
+        assert low.family == high.family and low.style_seed == high.style_seed
+        assert case.source_genome is None and case.source_steps == 0
+        name, = [name for name in FAMILY_GENE_NAMES if low.value(name) != high.value(name)]
+        assert low.value(name) == -.75 and high.value(name) == .75
+        assert case.to_dict()["comparison_genome"] == low.to_dict()
+        controls.add((high.family, name))
+    assert controls == {(family, name) for family in TREE_FAMILIES for name in FAMILY_GENE_NAMES}
+
+
+@pytest.mark.parametrize("target_change", ["shape", "material", "none"])
+@pytest.mark.parametrize("responds", [False, True])
+def test_gene_response_requires_both_outputs_to_match_changed_voxels(monkeypatch, target_change, responds):
+    from dataclasses import replace
+    from morphovoxel import validation
+
+    case = next(case for case in build_gene_response_panel(style_seeds=[42], fire_seeds=[41])
+                if case.case_id == "gene-response-weeping-canopy_spread")
+    layout = StateLayout(4, 1)
+    low_case = replace(case, genome=case.comparison_genome, comparison_genome=None)
+    high = _target_model(case, layout, TreeGenome.model_size())
+    low = _target_model(low_case, layout, TreeGenome.model_size())
+    if target_change != "shape":
+        occupancy, materials = make_tree_target(case.genome, 12)
+        changed_materials = materials.copy()
+        if target_change == "material":
+            changed_materials[materials == 3] = 2
+        def targets(genome, size, environment):
+            return occupancy, changed_materials if genome == case.comparison_genome else materials
+        monkeypatch.setattr(validation, "make_tree_target", targets)
+        low.template.copy_(high.template)
+        for label in range(layout.materials):
+            low.template[0, layout.material_slice.start + label] = torch.from_numpy((changed_materials == label) * 3)
+
+    class Conditional(_TargetModel):
+        def forward(self, state, genome=None, context=None):
+            result = super().forward(state, genome, context)
+            if responds and genome[0, 9] < 0:  # canopy_spread
+                result = low.template.clone()
+            return result
+
+    model = Conditional(high.template, genome_size=TreeGenome.model_size(), context_channels=len(ENVIRONMENT_CHANNELS))
+    model.train()
+    rng = torch.get_rng_state()
+    trial = validate_candidate(model, case, layout=layout, world_size=12, steps=4, recovery_steps=1,
+                               criteria=ValidationCriteria(min_steps=4, min_recovery_steps=1))
+    assert model.training
+    torch.testing.assert_close(torch.get_rng_state(), rng)
+    # Same stochastic sequence for the independent low/high growth rollouts.
+    assert [call[2] for call in model.calls[:4]] == [call[2] for call in model.calls[4:8]]
+    assert trial.metrics["target_iou"] == 1
+    if target_change == "none":
+        assert trial.metrics["gene_response_edited_voxels"] == 0
+        assert "gene_response_accuracy" not in trial.metrics
+    else:
+        assert trial.metrics["gene_response_edited_voxels"] > 0
+        assert trial.metrics["gene_response_accuracy"] == float(responds)
+        assert ("gene_response_below_minimum" in trial.failure_reasons) != responds
+        assert trial.accepted == responds
 
 
 def test_transition_validation_keeps_source_state_and_tests_every_direction():

@@ -19,7 +19,7 @@ from .state import StateLayout
 from .targets import make_tree_target
 
 
-VALIDATION_SCHEMA_VERSION = 1
+VALIDATION_SCHEMA_VERSION = 2
 DEFAULT_BOUNDARY_GENES = ("height", "canopy_spread")
 
 
@@ -39,6 +39,7 @@ class ValidationCriteria:
     max_late_drift: float = 0.25
     min_regeneration_score: float = 0.5
     min_transition_edit_accuracy: float = 0.5
+    min_gene_response_accuracy: float = 0.5
 
     def __post_init__(self) -> None:
         if self.min_steps < 1 or self.min_recovery_steps < 1 or self.state_limit <= 0 or self.occupancy_epsilon < 0:
@@ -52,6 +53,7 @@ class ValidationCriteria:
             self.max_late_drift,
             self.min_regeneration_score,
             self.min_transition_edit_accuracy,
+            self.min_gene_response_accuracy,
         )
         if any(not math.isfinite(value) or not 0 <= value <= 1 for value in unit_values):
             raise ValueError("validation fractions must be finite and within [0, 1]")
@@ -71,6 +73,7 @@ class ValidationCase:
     fire_seed: int
     source_genome: TreeGenome | None = None
     source_steps: int = 0
+    comparison_genome: TreeGenome | None = None
 
     def __post_init__(self) -> None:
         if not self.case_id or not self.category:
@@ -81,6 +84,12 @@ class ValidationCase:
             raise ValueError("source_steps must be a non-negative integer")
         if (self.source_genome is None) != (self.source_steps == 0):
             raise ValueError("transition validation needs a source genome and positive source_steps")
+        if self.comparison_genome is not None:
+            other = self.comparison_genome
+            changed = [spec.name for spec in TREE_GENE_SPECS if other.value(spec.name) != self.genome.value(spec.name)]
+            if (self.source_genome is not None or other.family != self.genome.family
+                    or other.style_seed != self.genome.style_seed or len(changed) != 1):
+                raise ValueError("gene response validation needs independent growth with exactly one changed gene")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -91,6 +100,7 @@ class ValidationCase:
             "fire_seed": self.fire_seed,
             **({"source_genome": self.source_genome.to_dict(), "source_steps": self.source_steps}
                if self.source_genome is not None else {}),
+            **({"comparison_genome": self.comparison_genome.to_dict()} if self.comparison_genome is not None else {}),
         }
 
 
@@ -290,6 +300,29 @@ def build_validation_panel(
     return _panel_cases(entries, tuple(environments or _representative_environments(seed)), tuple(fire_seeds))
 
 
+def build_gene_response_panel(
+    *, style_seeds: Sequence[int], fire_seeds: Sequence[int],
+) -> tuple[ValidationCase, ...]:
+    """Check every shape gene with independent low/high growth under matching noise.
+
+    Distribute styles and fire seeds over genes to avoid a Cartesian product.
+    Interior values exercise interpolation beyond the training endpoints.
+    """
+    if not style_seeds or not fire_seeds:
+        raise ValueError("gene response validation requires style and fire seeds")
+    cases = []
+    for family_index, family in enumerate(TREE_FAMILIES):
+        for gene_index, name in enumerate(FAMILY_GENE_NAMES):
+            index = family_index * len(FAMILY_GENE_NAMES) + gene_index
+            base = TreeGenome(family=family, style_seed=style_seeds[index % len(style_seeds)])
+            cases.append(ValidationCase(
+                f"gene-response-{family}-{name}", "gene_response",
+                base.with_values({name: .75}), EnvironmentSpec(), fire_seeds[index % len(fire_seeds)],
+                comparison_genome=base.with_values({name: -.75}),
+            ))
+    return tuple(cases)
+
+
 def build_candidate_panel(
     genome: TreeGenome,
     *,
@@ -443,13 +476,23 @@ def validate_candidate(
     mature_steps = steps - late_steps
     was_training = bool(model.training)
     model.eval()
-    source_state = None
+    source_state = comparison_state = None
     source_iou = None
     try:
         with torch.inference_mode(), fork_rng(run_device):
             torch.manual_seed(case.fire_seed)
             if run_device.type == "cuda":
                 torch.cuda.manual_seed_all(case.fire_seed)
+            if case.comparison_genome is not None:
+                if genome is None:
+                    raise ValueError("gene response validation requires a gene-conditioned model")
+                # Independent seedlings see identical fire masks. Restore RNG
+                # before the main rollout so growth noise cannot fake a response.
+                with fork_rng(run_device):
+                    comparison_state, _ = rollout(
+                        model, state.clone(), steps,
+                        tree_genome_tensor((case.comparison_genome,), device=run_device), context=context,
+                    )
             if case.source_genome is not None:
                 if genome is None:
                     raise ValueError("transition validation requires a tree-family model")
@@ -494,7 +537,8 @@ def validate_candidate(
     # Score materials over the required target body. Using predicted occupancy
     # as the mask would reward an empty organism with perfect material accuracy.
     material_score = material_accuracy(final[0, layout.material_slice], target_material, target) if bool(torch.isfinite(final).all()) else 0.0
-    safety = _state_safety((mature, final, recovered) + ((source_state,) if source_state is not None else ()), layout, criteria)
+    safety = _state_safety((mature, final, recovered)
+                           + tuple(value for value in (source_state, comparison_state) if value is not None), layout, criteria)
     metrics = {
         **safety,
         **_safe_metric_values(occupancy, target),
@@ -512,6 +556,31 @@ def validate_candidate(
     }
 
     failures: list[str] = []
+    if comparison_state is not None:
+        comparison_target, comparison_material = make_tree_target(case.comparison_genome, world_size, case.environment)
+        low_mask, high_mask = comparison_target > .5, target_np > .5
+        changed = torch.as_tensor(
+            (low_mask != high_mask) | (low_mask & high_mask & (comparison_material != target_material_np)),
+            device=run_device,
+        )
+        metrics["gene_response_edited_voxels"] = float(changed.sum())
+        # Identical rasterized targets have no measurable response to score;
+        # leave accuracy absent rather than claiming perfect gene control.
+        if metrics["gene_response_edited_voxels"]:
+            low_target = torch.as_tensor(comparison_target, device=run_device)
+            low_material = torch.as_tensor(comparison_material, device=run_device)
+            low_correct = ((comparison_state[0, layout.occupancy] > .5) == (low_target > .5)) & (
+                (low_target <= .5) | (comparison_state[0, layout.material_slice].argmax(0) == low_material))
+            high_correct = ((occupancy > .5) == (target > .5)) & (
+                (target <= .5) | (predicted_materials == target_material))
+            response = float((low_correct & high_correct)[changed].float().mean()) if safety["finite_state"] else 0.
+            metrics["gene_response_accuracy"] = response
+            if response < criteria.min_gene_response_accuracy:
+                failures.append("gene_response_below_minimum")
+        metrics["gene_comparison_target_iou"] = threshold_iou(
+            comparison_state[0, layout.occupancy], torch.as_tensor(comparison_target, device=run_device))
+        if metrics["gene_comparison_target_iou"] < criteria.min_target_iou:
+            failures.append("gene_comparison_target_iou_below_minimum")
     if source_iou is not None:
         metrics["source_target_iou"] = source_iou
         metrics["transition_initial_target_iou"] = threshold_iou(source_state[0, layout.occupancy], target)
@@ -558,6 +627,10 @@ def validate_candidate(
         score_parts += (source_iou,)
         if "transition_edit_accuracy" in metrics:
             score_parts += (metrics["transition_edit_accuracy"],)
+    if comparison_state is not None:
+        score_parts += (metrics["gene_comparison_target_iou"],)
+        if "gene_response_accuracy" in metrics:
+            score_parts += (metrics["gene_response_accuracy"],)
     score = min(score_parts) if validated else 0.0
     return ValidationTrial(case, steps, recovery_steps, validated, not failures, float(np.clip(score, 0, 1)), tuple(failures), metrics, descriptors)
 
