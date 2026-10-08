@@ -6,7 +6,7 @@ from functools import partial
 
 import torch
 
-from .model_3d import TreeFamilyNCA3D
+from .model_3d import NeuralCA3D, TreeFamilyNCA3D
 
 
 def rollout(
@@ -27,6 +27,14 @@ def rollout(
     step_model = model
     if steps and isinstance(model, TreeFamilyNCA3D):
         step_model = partial(model, prepared_genome=model.prepare_genome(genome))
+    if (steps and on_step is None and isinstance(model, (NeuralCA3D, TreeFamilyNCA3D)) and model.context_channels
+            and isinstance(context, torch.Tensor) and state.device.type == "mps" and torch.is_grad_enabled()):
+        expected = (state.shape[0], model.context_channels, *state.shape[2:])
+        if context.shape != expected:
+            raise ValueError("context must have shape [B, context_channels, D, H, W]")
+        # Local to this rollout: weights, environment and autograd graph must
+        # never leak into the next optimizer update or a changing environment.
+        step_model = partial(step_model, prepared_conditioning=model.prepare_conditioning(genome, context))
     for step in range(steps):
         step_context = context(step, state) if callable(context) else context
         if shared_fire_pairs:

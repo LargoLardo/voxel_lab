@@ -23,6 +23,7 @@ DEVICES = ["cpu", pytest.param("mps", marks=pytest.mark.skipif(
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("model_type,genome_size,context_channels,layers", [
     (NeuralCA3D, 0, 0, [8]),
+    (NeuralCA3D, 0, 2, [8]),
     (NeuralCA3D, 15, 2, [8, 5]),
     (TreeFamilyNCA3D, 15, 2, [8, 5]),
 ])
@@ -35,6 +36,7 @@ def test_pointwise_layers_match_conv3d_through_rollout_and_backward(
         for parameter in model.parameters():
             parameter.normal_(0, .03)
     reference = copy.deepcopy(model)
+    reference.prepare_conditioning = lambda genome, context: None
     for layer in reference.modules():
         if isinstance(layer, torch.nn.Conv3d):
             layer.forward = MethodType(torch.nn.Conv3d.forward, layer)
@@ -332,3 +334,68 @@ def test_prepared_losses_and_dense_material_mask_match_uncached_and_sparse_refer
     empty, terms = morphology_loss(state.detach().requires_grad_(), empty_target, torch.full_like(material, -1), layout)
     assert torch.isfinite(empty) and terms["material"] == 0
     empty.backward()
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("model_type", [NeuralCA3D, TreeFamilyNCA3D])
+def test_prepared_environment_preserves_states_and_all_gradients(device, model_type):
+    seed_everything(17, deterministic=device != "mps")
+    model = model_type(5, genome_size=15, context_channels=2, hidden_layers=[8, 5], fire_rate=1).to(device)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.normal_(0, .03)
+    reference = copy.deepcopy(model)
+    initial = torch.rand(4, 5, 3, 4, 5, device=device) + .2
+    inherited = tree_genome_tensor([TreeGenome(family=f) for f in TREE_FAMILIES], device=device)
+    environment = torch.rand(4, 2, 3, 4, 5, device=device)
+    with torch.inference_mode():
+        model.prepare_conditioning(inherited, environment)
+    for update in range(2):
+        states, gradients = [], []
+        for net, cache in ((model, True), (reference, False)):
+            net.zero_grad(set_to_none=True)
+            state = initial.clone().requires_grad_()
+            genome = inherited.clone().requires_grad_()
+            context = (environment + update * .2).clone().requires_grad_()
+            prepared = net.prepare_conditioning(genome, context) if cache else None
+            grown = state
+            for _ in range(5):
+                grown = net(grown, genome, context, prepared_conditioning=prepared)
+            grown.square().mean().backward()
+            states.append(grown.detach())
+            gradients.append([value.grad for value in (state, genome, context, *net.parameters())])
+        torch.testing.assert_close(states[0], states[1], atol=2e-6, rtol=1e-5)
+        for actual, expected in zip(*gradients):
+            torch.testing.assert_close(actual, expected, atol=1e-7, rtol=1e-4)
+        for net in (model, reference):
+            torch.optim.SGD(net.parameters(), lr=.1).step()
+
+
+@pytest.mark.parametrize("model_type", [NeuralCA3D, TreeFamilyNCA3D])
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="Apple GPU unavailable")
+def test_rollout_prepares_fixed_environment_once_and_keeps_dynamic_context(model_type, monkeypatch):
+    model = model_type(3, genome_size=15, context_channels=2, hidden_layers=[4]).to('mps')
+    state = torch.ones(2, 3, 3, 4, 5, device='mps')
+    context = torch.ones(2, 2, 3, 4, 5, device='mps')
+    genome = tree_genome_tensor([TreeGenome()] * 2, device='mps')
+    calls = []
+    prepare = model.prepare_conditioning
+    def observed(inherited, value):
+        calls.append(value)
+        return prepare(inherited, value)
+    monkeypatch.setattr(model, 'prepare_conditioning', observed)
+    rollout(model, state, 3, genome, context=context)
+    assert len(calls) == 1
+    rollout(model, state, 2, genome, context=context + 1)
+    assert len(calls) == 2
+    torch.testing.assert_close(calls[-1], context + 1)
+    steps = []
+    def changing(step, _state):
+        steps.append(step)
+        return context + step
+    rollout(model, state, 3, genome, context=changing)
+    assert steps == [0, 1, 2] and len(calls) == 2
+    rollout(model, state, 3, genome, context=context, on_step=lambda step, value: None)
+    assert len(calls) == 2  # Callbacks may change inputs between cellular steps.
+    with pytest.raises(ValueError, match='context must have shape'):
+        rollout(model, state, 3, genome, context=context[:, :1])
