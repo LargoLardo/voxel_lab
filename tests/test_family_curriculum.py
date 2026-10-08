@@ -410,6 +410,11 @@ def test_phase_two_checkpoint_handoffs_and_full_curriculum_validation(tmp_path, 
             panel = basic["validation"]["validation_panel"]
             assert {case["genome"]["family"] for case in panel} == set(TREE_FAMILIES)
             assert all(not any(case["genome"]["genes"].values()) for case in panel)
+            if mode == "full":
+                reference = payload["transition_state"]["base_reference"]
+                assert reference["step"] == basic["step"]
+                torch.testing.assert_close(reference["model"], basic["model"])
+                assert payload["transition_state"]["retention"]["base_step"] == basic["step"]
         best = torch.load(run / "checkpoints" / "best.pt", map_location="cpu", weights_only=False)
         assert best["validation"]["curriculum_stage"] == ("variation" if mode == "full" else mode)
         if mode in {"transition", "gene_transition"}:

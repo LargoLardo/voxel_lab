@@ -60,7 +60,8 @@ def test_rehearsal_pools_are_isolated_and_resume_without_narrowing(tmp_path, mon
     assert second["transition_state"]["cursors"]["neutral"] == 4
 
 
-def test_best_transition_requires_retention_and_improved_edits(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["transition", "variation"])
+def test_best_requires_retention_and_quality_to_break_zero_score_ties(tmp_path, monkeypatch, mode):
     from morphovoxel.validation import ValidationReport, ValidationTrial
 
     retained_values = iter((.8, .8, .65, .78, .78))  # Baseline, then four validations.
@@ -71,10 +72,10 @@ def test_best_transition_requires_retention_and_improved_edits(tmp_path, monkeyp
         return ValidationReport(tuple(ValidationTrial(
             case, 1, 1, True, False, 0., ("state_bound",),
             {"target_iou": quality, "material_accuracy": .8, "late_drift": .01, "finite_state": 1.,
-             **({} if retention else {"transition_edited_voxels": 12., "transition_edit_accuracy": quality})}, {},
+             **({} if retention or mode == "variation" else {"transition_edited_voxels": 12., "transition_edit_accuracy": quality})}, {},
         ) for case in panel))
     monkeypatch.setattr(trainer, "validate_panel", fake_validation)
-    config = dict(run_name="guarded", runs_root=str(tmp_path), model_kind="tree_family", family_curriculum="transition",
+    config = dict(run_name="guarded", runs_root=str(tmp_path), model_kind="tree_family", family_curriculum=mode,
                   device="cpu", world_size=12, batch_size=2, materials=4, hidden_channels=1, model_width=4,
                   fire_rate=1, iterations=4, transition_source_steps=2, rollout_steps=1, persistence_steps=1,
                   validation_steps=1, validation_recovery_steps=1, validation_every=1,
@@ -113,3 +114,77 @@ def test_retention_cannot_hide_a_forgotten_family_or_nonfinite_state():
     assert "late_drift" in retention_failures(original, current, .05)[0]
     current["weeping/variation"]["finite_state"] = 0.
     assert "non-finite" in retention_failures(original, current, .05)[0]
+
+
+def test_variation_rehearses_original_specialist_separately_from_new_styles(tmp_path):
+    from morphovoxel.model_3d import NeuralCA3D
+
+    source = tmp_path / "specialist.pt"
+    genome = TreeGenome(family="weeping", style_seed=42).with_values({"height": .3})
+    save_checkpoint(source, NeuralCA3D(6, 4, 0, 1), step=8000, config={
+        "model_kind": "tree_specialist", "tree_genome": genome.to_dict(),
+        "hidden_channels": 1, "hidden_layers": [4], "materials": 4, "fire_rate": 1.,
+    })
+    config = dict(run_name="variation", runs_root=str(tmp_path), model_kind="tree_family",
+                  family_curriculum="variation", initialize_from_checkpoint=str(source),
+                  device="cpu", world_size=12, batch_size=8, pool_size=16,
+                  iterations=8, rollout_steps=1, persistence_steps=1, validation_steps=0,
+                  family_style_seeds=[970806], fresh_fraction=.25)
+    run = trainer.train(config, dimensions=3, conditional=True)
+    payload = torch.load(run / "checkpoints/latest.pt", weights_only=False)
+    replay = payload["transition_state"]["pools"]["neutral"]
+    assert replay["style_seeds"].eq(42).all()
+    assert replay["genomes"][:, 4].eq(.3).all()
+    assert set(replay["genomes"][:, :4].argmax(1).tolist()) == {3}  # weeping
+    assert replay["ages"].max() == 2
+    logs = pd.read_csv(run / "logs.csv")
+    assert logs.neutral_rehearsal_fraction.tolist() == [1, 0, 0, 0, 1, 0, 0, 0]
+    assert not logs.transition_fraction.any()
+    assert payload["transition_state"]["cursors"]["transition"] == 24
+    # Resume visits mature bases as well as reseeded examples; it cannot shrink
+    # the replay coverage to this new run's update budget or style list.
+    config.pop("initialize_from_checkpoint")
+    resumed = trainer.train({**config, "resume": str(run / "checkpoints/latest.pt"), "iterations": 1},
+                            dimensions=3, conditional=True)
+    updated = torch.load(resumed / "checkpoints/latest.pt", weights_only=False)
+    assert updated["transition_state"]["pools"]["neutral"]["ages"].max() == 4
+
+
+def test_legacy_variation_recovers_original_reference_and_handoffs_keep_it(tmp_path):
+    from morphovoxel.checkpointing import initialize_tree_family
+    from morphovoxel.model_3d import NeuralCA3D
+    from morphovoxel.training.transition import base_reference
+
+    original = tmp_path / "specialist.pt"
+    specialist = NeuralCA3D(6, 4, 0, 1)
+    genome = TreeGenome(family="weeping", style_seed=42).with_values({"height": .4})
+    save_checkpoint(original, specialist, step=8000, config={
+        "model_kind": "tree_specialist", "tree_genome": genome.to_dict(),
+    })
+    model = NeuralCA3D(6, 4, TreeGenome.model_size(), 1)
+    initialize_tree_family(original, model)
+    expected = {key: value.clone() for key, value in model.state_dict().items()}
+    with torch.no_grad():
+        model.update[-1].bias.add_(1)
+    current = {key: value.clone() for key, value in model.state_dict().items()}
+    path = tmp_path / "variation.pt"
+    save_checkpoint(path, model, step=5000, config={
+        "model_kind": "tree_gene", "family_curriculum": "variation", "iterations": 8000,
+        "initialize_from_checkpoint": str(original),
+    })
+    payload = torch.load(path, weights_only=False)
+    recipe = replay_recipe(payload, {})
+    assert recipe["neutral_style_seeds"] == [42]
+    assert recipe["genome_span"] == 1  # New styles/genes do not redefine the base.
+    rng = torch.get_rng_state()
+    reference = base_reference(payload, path, model, recipe)
+    torch.testing.assert_close(torch.get_rng_state(), rng)
+    torch.testing.assert_close(model.state_dict(), current)
+    torch.testing.assert_close(reference["model"], expected)
+    assert reference["checkpoint"] == str(original) and reference["step"] == 8000
+    assert reference["recipe"]["neutral_genome"] == genome.to_dict()
+    original.unlink()
+    payload["transition_state"] = {"base_reference": reference}
+    carried = base_reference(payload, path, model, recipe)
+    torch.testing.assert_close(carried.pop("model"), reference["model"])
+    assert carried == {key: value for key, value in reference.items() if key != "model"}

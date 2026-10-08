@@ -30,7 +30,7 @@ from ..validation import ValidationCase, ValidationCriteria, build_candidate_pan
 from .losses import _distance_field, counterfactual_loss, morphology_loss, prepare_morphology_targets
 from .family import curriculum_sampling_options, curriculum_values, family_style_seeds, sample_counterfactual_family_data, sample_transition_destinations, validate_family_styles
 from .state_pool import StatePool
-from .transition import family_pool, replay_recipe, replay_sampling_options, retention_panel, retention_metrics, retention_failures, transition_rank
+from .transition import base_reference, family_pool, replay_recipe, replay_sampling_options, retention_panel, retention_metrics, retention_failures, transition_rank
 
 LOGGER = logging.getLogger(__name__)
 
@@ -504,9 +504,10 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         config["family_curriculum_iterations"] = curriculum_iterations
         curriculum_values(start - curriculum_start, curriculum_iterations, config)
     transition_training = config.get("family_curriculum") in {"transition", "gene_transition"}
+    rehearsal_training = transition_training or config.get("family_curriculum") in {"variation", "full"}
     transition_state = None
     transition_source_steps = config.get("transition_source_steps", 128)
-    if transition_training:
+    if rehearsal_training:
         if restored:
             recipe = (restored.get("config") or {}).get("transition_replay")
         else:
@@ -515,6 +516,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             if source_payload is None and source_path:
                 source_payload = torch.load(source_path, map_location="cpu", weights_only=False)
             recipe = replay_recipe(source_payload or {}, config)
+            if config.get("family_curriculum") == "full" or (not source_path and not transition_training):
+                recipe = replay_recipe({"config": {**config, "family_curriculum": "basics"}}, config)
         config["transition_replay"] = recipe
         tolerance = float(config.setdefault("transition_retention_tolerance", .05))
         if not 0 <= tolerance <= 1:
@@ -523,6 +526,16 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         transition_state.setdefault("cursors", {"transition": 0, "neutral": 0, "variation": 0})
         if isinstance(transition_source_steps, bool) or not isinstance(transition_source_steps, int) or transition_source_steps < 1:
             raise ValueError("transition_source_steps must be a positive integer")
+        if curriculum_values(start - curriculum_start, curriculum_iterations, config)["curriculum_stage"] != "basics":
+            if "base_reference" not in transition_state:
+                transition_state["base_reference"] = base_reference(restored or source_payload or {}, source_path, model, recipe)
+            original_recipe = transition_state["base_reference"]["recipe"]
+            for key in ("neutral_genome", "environment"):
+                if key in original_recipe:
+                    recipe[key] = original_recipe[key]
+                else:
+                    recipe.pop(key, None)
+            recipe["neutral_style_seeds"] = original_recipe.get("neutral_style_seeds", original_recipe["style_seeds"])
     run = create_run_directory(str(config.get("run_name", f"phase{dimensions}d")), config.get("runs_root", "runs"))
     save_config(config, run / "config.yaml")
     run_metadata, started = metadata(seed, model, device), time.perf_counter()
@@ -633,8 +646,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         if not bool((pool.genomes[:, :len(TREE_FAMILIES)].argmax(1) == TREE_FAMILIES.index(tree_default.family)).all()):
             raise ValueError("checkpoint pool contains a different tree family; start a fresh gene curriculum")
     replay_pools = {}
-    if transition_training:
-        for index, label in enumerate(("neutral", "variation")):
+    if rehearsal_training:
+        for index, label in enumerate(("neutral", "variation") if transition_training else ("neutral",)):
             saved_pool = transition_state.get("pools", {}).get(label)
             if saved_pool and not config.get("reset_pool_on_resume", False):
                 replay_pools[label] = _restore_pool(saved_pool)
@@ -661,34 +674,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         if context_channels:
             specialist_context = environment_context_batch([environment_default] * batch, size, device=device)
         specialist_prepared_targets = prepare_morphology_targets(specialist_target, specialist_material)
-    if transition_training and validation_steps > 0:
-        retention_cases = retention_panel(recipe, trained_families, config)
-        retention_options = dict(
-            layout=layout, world_size=size, steps=validation_steps,
-            recovery_steps=int(config.get("validation_recovery_steps", 64)),
-            seed_size=int(config.get("seed_size", 1)), device=device,
-            criteria=ValidationCriteria(
-                min_steps=int(config.get("validation_min_steps", 256)),
-                min_recovery_steps=int(config.get("validation_min_recovery_steps", 64)), state_limit=state_limit,
-            ),
-        )
-        retention_settings = {
-            "panel": [case.to_dict() for case in retention_cases],
-            **{key: value for key, value in retention_options.items() if key not in {"layout", "device", "criteria"}},
-            "criteria": retention_options["criteria"].to_dict(), "tolerance": tolerance,
-        }
-        guard = transition_state.get("retention")
-        if guard is not None and guard["settings"] != retention_settings:
-            raise ValueError("retention validation settings changed; use initialize_from_checkpoint for a new baseline")
-        if guard is None:
-            LOGGER.info("Measuring original growth before transition training (%d retention cases)", len(retention_cases))
-            baseline = retention_metrics(validate_panel(
-                model, retention_cases, **retention_options,
-                on_trial=lambda completed, total, trial: LOGGER.info("retention baseline case=%d/%d", completed, total),
-            ))
-            guard = {"settings": retention_settings, "baseline": baseline}
-            transition_state["retention"] = guard
-        write_json(run / "metrics" / "retention_baseline.json", guard)
+    guard = None
     final_state = final_target = final_materials = None
     best_score, last_validation = float("-inf"), None
     previous_stage = None
@@ -704,19 +690,19 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         new_settings = {key: value for key, value in config.items() if key not in run_options}
         old_validation = incumbent.get("validation") or {}
         # Scores without the same original-growth baseline are not comparable.
-        comparable = (not transition_training or (
+        comparable = (not rehearsal_training or (
             (incumbent.get("transition_state") or {}).get("retention") == transition_state.get("retention")
             and "retention" in old_validation))
         if old_settings == new_settings and old_validation and comparable:
             last_validation = incumbent["validation"]
             best_score = float(last_validation.get("best_worst_genome_persistence_score", float("-inf")))
             previous_stage = last_validation.get("curriculum_stage")
-            if transition_training:
+            if rehearsal_training:
                 transition_state["best_rank"] = incumbent["transition_state"]["best_rank"]
         del incumbent
-    if transition_training and transition_state.get("best_rank") is not None:
+    if rehearsal_training and transition_state.get("best_rank") is not None:
         best_score = transition_state["best_rank"][0]
-        previous_stage = config["family_curriculum"]
+        previous_stage = curriculum_values(start - curriculum_start, curriculum_iterations, config)["curriculum_stage"]
     pair_cursor = (start * accumulation_steps * max(1, batch // 2)) if tree_conditioned else 0
     for micro_step in range(start * accumulation_steps, (start + iterations) * accumulation_steps):
         step = micro_step // accumulation_steps
@@ -733,22 +719,69 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             # Scores on neutral families and on varied genomes are not comparable.
             best_score, last_validation = float("-inf"), None
             previous_stage = current_stage
+        rehearsal_active = rehearsal_training and current_stage != "basics"
+        if rehearsal_active and "base_reference" not in transition_state:
+            # Full curriculum: protect the basics just learned, before any
+            # variation update. The snapshot travels with later checkpoints.
+            transition_state["base_reference"] = base_reference({}, None, model, recipe)
+            transition_state["base_reference"].update(checkpoint=str(run / "checkpoints/basic_families.pt"), step=step)
+        if rehearsal_active and validation_steps > 0 and guard is None:
+            retention_cases = retention_panel(recipe if transition_training else {**recipe, "genome_span": 0.}, trained_families, config)
+            retention_options = dict(
+                layout=layout, world_size=size, steps=validation_steps,
+                recovery_steps=int(config.get("validation_recovery_steps", 64)),
+                seed_size=int(config.get("seed_size", 1)), device=device,
+                criteria=ValidationCriteria(
+                    min_steps=int(config.get("validation_min_steps", 256)),
+                    min_recovery_steps=int(config.get("validation_min_recovery_steps", 64)), state_limit=state_limit,
+                ),
+            )
+            retention_settings = {
+                "panel": [case.to_dict() for case in retention_cases],
+                **{key: value for key, value in retention_options.items() if key not in {"layout", "device", "criteria"}},
+                "criteria": retention_options["criteria"].to_dict(), "tolerance": tolerance,
+            }
+            guard = transition_state.get("retention")
+            if guard is not None and guard["settings"] != retention_settings:
+                raise ValueError("retention validation settings changed; use initialize_from_checkpoint for a new baseline")
+            if guard is None:
+                LOGGER.info("Measuring original growth before variation/edit training (%d retention cases)", len(retention_cases))
+                baseline = {}
+                varied_cases = tuple(case for case in retention_cases if case.category == "variation")
+                if varied_cases:
+                    baseline.update(retention_metrics(validate_panel(model, varied_cases, **retention_options)))
+                current_weights = {key: value.detach().clone() for key, value in model.state_dict().items()}
+                try:
+                    model.load_state_dict(transition_state["base_reference"]["model"])
+                    baseline.update(retention_metrics(validate_panel(
+                        model, tuple(case for case in retention_cases if case.category == "neutral"), **retention_options,
+                        on_trial=lambda completed, total, trial: LOGGER.info("retention baseline case=%d/%d", completed, total),
+                    )))
+                finally:
+                    model.load_state_dict(current_weights)
+                guard = {"settings": retention_settings, "baseline": baseline,
+                         "base_checkpoint": transition_state["base_reference"]["checkpoint"],
+                         "base_step": transition_state["base_reference"]["step"]}
+                transition_state["retention"] = guard
+            write_json(run / "metrics" / "retention_baseline.json", guard)
         context = None
         batch_kind = "transition"
         if transition_training:
             choice = random.random()
             batch_kind = "neutral" if choice < .25 else "variation" if choice < .5 else "transition"
+        elif rehearsal_active and micro_step % 4 == 0:
+            batch_kind = "neutral"
         transition_batch = transition_training and batch_kind == "transition"
         active_pool = replay_pools.get(batch_kind, pool)
         sampling_options = ({"genome_span": curriculum["genome_span"],
                              "environment_span": curriculum["environment_span"] if context_channels else 0.0,
                              **curriculum_sampling_options(curriculum, config)} if tree_conditioned else {})
-        if transition_training and not transition_batch:
+        if batch_kind in replay_pools:
             sampling_options = replay_sampling_options(recipe, neutral=batch_kind == "neutral")
         if active_pool and tree_conditioned:
-            cursor = transition_state["cursors"][batch_kind] if transition_training else pair_cursor
+            cursor = transition_state["cursors"][batch_kind] if rehearsal_training else pair_cursor
             pool_batch = active_pool.sample_stratified_pairs(batch, cursor, device)
-            if transition_training:
+            if rehearsal_training:
                 transition_state["cursors"][batch_kind] += batch // 2
             else:
                 pair_cursor += batch // 2
@@ -860,7 +893,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             (minimum, maximum), (persistence_minimum, persistence_maximum), differentiable_step_limit,
         )
         basic_batch = (current_stage == "basics" or (current_stage == "transition" and transition_batch)
-                       or (transition_training and (batch_kind == "neutral" or
+                       or (rehearsal_active and (batch_kind == "neutral" or
                            (batch_kind == "variation" and not recipe["genome_span"]))))
         if basic_batch:
             # Neutral pairs start identically and share fire masks and damage.
@@ -929,7 +962,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 loss = loss + float(config.get("persistence_weight", 1.0)) * float(
                     config.get("counterfactual_weight", 1.0)
                 ) * persistence_counterfactual
-        if current_stage in {"transition", "gene_transition"}:
+        if rehearsal_active:
             components["transition_fraction"] = loss.new_tensor(float(transition_batch))
             components["neutral_rehearsal_fraction"] = loss.new_tensor(float(batch_kind == "neutral"))
             components["variation_rehearsal_fraction"] = loss.new_tensor(float(batch_kind == "variation"))
@@ -1127,7 +1160,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             if validation_records:
                 _write_metrics(run / "metrics" / "persistence_validation.csv", validation_records)
             promote = worst_score >= best_score
-            if transition_training:
+            if rehearsal_active:
                 LOGGER.info("Checking original growth retention step=%d", step + 1)
                 retained = retention_metrics(validate_panel(
                     model, retention_cases, **retention_options,

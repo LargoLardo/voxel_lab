@@ -1,4 +1,4 @@
-"""Fixed rehearsal coverage for live-transition training."""
+"""Fixed rehearsal coverage and retention checks for variation and live edits."""
 from __future__ import annotations
 
 import copy
@@ -9,6 +9,7 @@ import torch
 
 from ..environment import EnvironmentSpec
 from ..genomes import TreeGenome
+from ..random_utils import fork_rng
 from ..seeding import seed_state
 from .family import FamilyData, curriculum_values, family_style_seeds
 from .state_pool import StatePool
@@ -18,19 +19,20 @@ def replay_recipe(payload: dict, fallback: dict, _seen: frozenset = frozenset())
     """Keep the input checkpoint's coverage when the edit schedule starts over."""
     source = payload.get("config") or fallback
     previous = copy.deepcopy(source.get("transition_replay"))
-    if previous is None and source.get("family_curriculum") in {"transition", "gene_transition"}:
+    if previous is None and source.get("family_curriculum") in {"variation", "transition", "gene_transition"}:
         origin = source.get("initialize_from_checkpoint") or source.get("initialize_from_specialist")
         if origin and Path(origin).is_file() and str(Path(origin).resolve()) not in _seen:
             previous = replay_recipe(torch.load(origin, map_location="cpu", weights_only=False), fallback,
                                      _seen | {str(Path(origin).resolve())})
         elif origin:
-            logging.getLogger(__name__).warning("Original transition checkpoint %s unavailable; estimating rehearsal coverage from saved curriculum", origin)
+            logging.getLogger(__name__).warning("Original growth checkpoint %s unavailable; estimating rehearsal coverage from saved curriculum", origin)
     kind = (payload.get("metadata") or source).get("model_kind")
     if kind == "tree_specialist":
         genome = TreeGenome.from_dict(source.get("tree_genome", {}))
         return {
             "genome_span": 0., "background_span": 0., "style_random_fraction": 0.,
-            "style_seeds": [genome.style_seed], "neutral_genome": genome.to_dict(),
+            "style_seeds": [genome.style_seed], "neutral_style_seeds": [genome.style_seed],
+            "neutral_genome": genome.to_dict(),
             "environment": source.get("environment", {}),
         }
     budget = int(source.get("family_curriculum_iterations", source.get("iterations", 1)))
@@ -41,12 +43,14 @@ def replay_recipe(payload: dict, fallback: dict, _seen: frozenset = frozenset())
         "background_span": values.get("background_span", values["genome_span"]),
         "style_random_fraction": values.get("style_random_fraction", 1.),
         "style_seeds": list(family_style_seeds(source)),
+        "neutral_style_seeds": list(family_style_seeds(source)),
     }
     if previous:
         # A handoff retains the older base as well as newly learned variation.
         # True resume uses the stored recipe directly in the trainer.
         for name in ("genome_span", "background_span", "style_random_fraction"):
             previous[name] = max(previous[name], recipe[name])
+        previous.setdefault("neutral_style_seeds", list(previous["style_seeds"]))
         if recipe["genome_span"]:
             previous["style_seeds"] = sorted(set(previous["style_seeds"] + recipe["style_seeds"]))
         return previous
@@ -58,12 +62,59 @@ def replay_sampling_options(recipe: dict, *, neutral: bool) -> dict:
         "genome_span": 0. if neutral else recipe["genome_span"],
         "background_span": 0. if neutral else recipe["background_span"],
         "style_random_fraction": 0. if neutral else recipe["style_random_fraction"],
-        "style_seeds": recipe["style_seeds"],
+        "style_seeds": recipe.get("neutral_style_seeds", recipe["style_seeds"]) if neutral else recipe["style_seeds"],
         "neutral_fraction": 1. if neutral or not recipe["genome_span"] else 0.,
         "random_gene_values": True,
         "neutral_genome": TreeGenome.from_dict(recipe["neutral_genome"]) if recipe.get("neutral_genome") else None,
         "fixed_environment": EnvironmentSpec.from_dict(recipe.get("environment", {})),
     }
+
+
+def base_reference(payload: dict, path, model, recipe: dict) -> dict:
+    """Carry original base weights for validation, without a training teacher.
+
+    Older runs lack this snapshot: follow their initialization chain so resuming
+    a degraded variation run does not declare the degraded shape the new base.
+    """
+    from ..checkpointing import initialize_tree_family
+
+    seen = set()
+    while path and str(Path(path).resolve()) not in seen:
+        seen.add(str(Path(path).resolve()))
+        saved = (payload.get("transition_state") or {}).get("base_reference")
+        if saved is not None:
+            return copy.deepcopy(saved)
+        source = payload.get("config") or {}
+        mode = source.get("family_curriculum")
+        if mode == "full":
+            origin = Path(path).with_name("basic_families.pt")
+            if Path(path).resolve() == origin.resolve():
+                break
+        elif mode in {"variation", "transition", "gene_transition"}:
+            origin = (source.get("initialize_from_checkpoint") or source.get("initialize_from_specialist")
+                      or source.get("resume"))
+        else:
+            break
+        if not origin or not Path(origin).is_file() or str(Path(origin).resolve()) in seen:
+            logging.getLogger(__name__).warning(
+                "Original base checkpoint unavailable for %s; using the earliest available weights at %s", origin, path,
+            )
+            break
+        path = origin
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+    current = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
+    try:
+        if path:
+            with fork_rng(next(model.parameters()).device):
+                initialize_tree_family(path, model)
+            recipe = replay_recipe(payload, recipe)
+        return {
+            "model": {key: value.detach().cpu().clone() for key, value in model.state_dict().items()},
+            "recipe": copy.deepcopy(recipe), "checkpoint": str(path) if path else None,
+            "step": int(payload.get("step", 0)),
+        }
+    finally:
+        model.load_state_dict(current)
 
 
 def family_pool(data: FamilyData, size: int, layout, config: dict, seed: int) -> StatePool:
@@ -93,7 +144,7 @@ def retention_panel(recipe: dict, families, config: dict):
     base = TreeGenome.from_dict(recipe.get("neutral_genome", {}))
     entries = [
         ("neutral", TreeGenome(family=family, genes=base.genes, style_seed=style))
-        for family in families for style in recipe["style_seeds"]
+        for family in families for style in recipe.get("neutral_style_seeds", recipe["style_seeds"])
     ]
     if recipe["genome_span"]:
         data = sample_counterfactual_family_data(
