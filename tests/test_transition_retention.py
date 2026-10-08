@@ -188,3 +188,31 @@ def test_legacy_variation_recovers_original_reference_and_handoffs_keep_it(tmp_p
     carried = base_reference(payload, path, model, recipe)
     torch.testing.assert_close(carried.pop("model"), reference["model"])
     assert carried == {key: value for key, value in reference.items() if key != "model"}
+
+
+def test_legacy_resume_does_not_leave_an_unchecked_best_advertised(tmp_path, monkeypatch):
+    from morphovoxel.validation import ValidationReport, ValidationTrial
+
+    qualities = iter((.9, .5, .5))  # Original base, varied panel, retained base.
+    def validation(model, panel, **kwargs):
+        quality = next(qualities)
+        return ValidationReport(tuple(ValidationTrial(
+            case, 1, 1, True, False, 0., ("state_bound",),
+            dict(target_iou=quality, material_accuracy=quality, late_drift=0., finite_state=1.), {},
+        ) for case in panel))
+    monkeypatch.setattr(trainer, "validate_panel", validation)
+    config = dict(run_name="legacy", runs_root=str(tmp_path), model_kind="tree_family", family_curriculum="variation",
+                  device="cpu", world_size=12, batch_size=2, materials=4, hidden_channels=1, model_width=4,
+                  fire_rate=1, iterations=1, rollout_steps=1, persistence_steps=1,
+                  validation_steps=1, validation_recovery_steps=1, validation_every=1,
+                  validation_fire_seeds=[71], family_style_seeds=[0])
+    path = tmp_path / "legacy/checkpoints/best.pt"
+    model = TreeFamilyNCA3D(6, 4, TreeGenome.model_size(), 1, 12)
+    save_checkpoint(path, model, step=2, config=config, validation={"curriculum_stage": "variation"})
+    run = trainer.train({**config, "resume": str(path)}, dimensions=3, conditional=True)
+    assert not path.exists()
+    preserved = list(path.parent.glob("best_before_retention_2_*.pt"))
+    assert len(preserved) == 1 and torch.load(preserved[0], weights_only=False)["step"] == 2
+    latest = torch.load(run / "checkpoints/latest.pt", weights_only=False)
+    assert latest["step"] == 3 and not latest["validation"]["retention"]["eligible"]
+    assert latest["validation"]["best_worst_genome_persistence_score"] is None

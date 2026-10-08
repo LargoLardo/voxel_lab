@@ -524,7 +524,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             raise ValueError("transition_retention_tolerance must be within [0, 1]")
         transition_state = (restored or {}).get("transition_state") or {}
         transition_state.setdefault("cursors", {"transition": 0, "neutral": 0, "variation": 0})
-        if isinstance(transition_source_steps, bool) or not isinstance(transition_source_steps, int) or transition_source_steps < 1:
+        if transition_training and (isinstance(transition_source_steps, bool) or not isinstance(transition_source_steps, int) or transition_source_steps < 1):
             raise ValueError("transition_source_steps must be a positive integer")
         if curriculum_values(start - curriculum_start, curriculum_iterations, config)["curriculum_stage"] != "basics":
             if "base_reference" not in transition_state:
@@ -693,6 +693,14 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         comparable = (not rehearsal_training or (
             (incumbent.get("transition_state") or {}).get("retention") == transition_state.get("retention")
             and "retention" in old_validation))
+        if rehearsal_training and validation_steps > 0 and "retention" not in old_validation and curriculum_values(
+            start - curriculum_start, curriculum_iterations, config,
+        )["curriculum_stage"] != "basics":
+            # A legacy best may already have forgotten the base. Preserve it for
+            # manual inspection without advertising it as a guarded best.
+            backup = best_checkpoint.with_name(f"best_before_retention_{incumbent['step']}_{time.time_ns()}.pt")
+            best_checkpoint.rename(backup)
+            LOGGER.info("Preserved unchecked best checkpoint as %s", backup)
         if old_settings == new_settings and old_validation and comparable:
             last_validation = incumbent["validation"]
             best_score = float(last_validation.get("best_worst_genome_persistence_score", float("-inf")))
@@ -1202,7 +1210,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 genomes={"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()},
             )
     checkpoint = run / "checkpoints" / "latest.pt"
-    validation_summary = ({**last_validation, "best_worst_genome_persistence_score": best_score} if last_validation else None)
+    saved_best_score = best_score if np.isfinite(best_score) else None
+    validation_summary = ({**last_validation, "best_worst_genome_persistence_score": saved_best_score} if last_validation else None)
     save_checkpoint(
         checkpoint, model, optimizer, step=start + iterations, scheduler=scheduler, config=config, pool=pool, transition_state=transition_state,
         genomes=({"schema_version": TREE_GENOME_VERSION, "default": tree_default.to_dict()} if tree_conditioned else list(MORPHOLOGIES) if conditional else None),
@@ -1263,7 +1272,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     plot_metrics(run / "logs.csv", run / "visualizations" / "metrics.png")
     run_metadata["training_seconds"] = time.perf_counter() - started
     if last_validation:
-        run_metadata["best_worst_genome_persistence_score"] = best_score
+        run_metadata["best_worst_genome_persistence_score"] = saved_best_score
         run_metadata["last_persistence_validation"] = last_validation
     write_json(run / "metadata.json", run_metadata)
     return run
