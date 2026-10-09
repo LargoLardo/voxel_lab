@@ -1,13 +1,16 @@
-run_name: tree_family
+# Fine-tune a trained variation checkpoint with a fresh optimizer at lower LR.
+# Select your strongest best.pt; architecture, tree scope and base reference are inherited.
+# Start with the learned full gene range; isolated/interior examples remain mixed in.
+run_name: tree_family_finetune
 dimensions: 3
 model_kind: tree_family
 conditional: true
 environment_conditioning: true
-initialize_from_checkpoint: runs/tree_specialist/checkpoints/best.pt
+initialize_from_checkpoint: runs/tree_family/checkpoints/best.pt
 # full: basics then variation; basics / variation / transition / gene_transition: only that part.
 # variation and gene_transition follow the input checkpoint: one tree type for
 # a specialist, all four for a family model. Architecture is inherited.
-family_curriculum: full
+family_curriculum: variation
 # Both transition modes grow the source before switching, retaining its voxel state.
 transition_source_steps: 128
 # Transition batches: 50% edits, 25% bases, 25% previously learned variation.
@@ -19,7 +22,7 @@ transition_retention_tolerance: 0.05
 basic_family_fraction: 0.25
 family_style_seeds: [0, 970806, 1941611, 2912417]
 neutral_fraction: 0.25
-combination_start_fraction: 0.25
+combination_start_fraction: 0.0
 # Among nonneutral pairs, retain isolated genes on familiar styles and mix
 # intermediate values with full-range endpoint pairs throughout variation.
 isolated_gene_fraction: 0.5
@@ -33,11 +36,11 @@ hidden_channels: 8
 model_width: 64
 # Optional: hidden_layers: [32, 32] (must match the initialization checkpoint).
 fire_rate: 0.5
-iterations: 8000
+iterations: 4000
 rollout_steps: [24, 48]
 pool_size: 0  # Auto: 16 for a specialist's genes, 64 for all families.
 fresh_fraction: 0.25
-learning_rate: 0.0003
+learning_rate: 0.0001
 gradient_clip: 1.0
 state_limit: 4.0
 loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 2.0, magnitude: 0.01, soft_dice: 1.0, soft_iou: 0.5, distance: 0.5, height: 0.25, width: 0.25, volume: 0.5, centroid: 0.25, trunk_dice: 0.25, branch_dice: 2.0, leaf_dice: 1.0}
@@ -51,7 +54,7 @@ gradient_accumulation_steps: 1
 train_light_tropism: false
 persistence_steps: [16, 32]
 persistence_weight: 1.0
-initial_genome_span: 0.15
+initial_genome_span: 1.0
 genome_widen_fraction: 0.45
 # Keep this stage focused on genome separation. Environmental variation is
 # introduced deliberately by tree_environment.yaml after regeneration.

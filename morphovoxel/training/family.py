@@ -207,7 +207,13 @@ def curriculum_sampling_options(values: dict, config: dict) -> dict:
     return {
         name: values[name]
         for name in ("background_span", "style_random_fraction", "neutral_fraction")
-    } | {"style_seeds": family_style_seeds(config), "random_gene_values": values["curriculum_stage"] == "gene_transition"}
+    } | {
+        "style_seeds": family_style_seeds(config),
+        # Continue practicing individual controls on familiar styles after
+        # combinations widen; retain both endpoints and intermediate values.
+        "isolated_gene_fraction": float(config.get("isolated_gene_fraction", .5)),
+        "interior_gene_fraction": float(config.get("interior_gene_fraction", .5)),
+    }
 
 
 def sample_transition_destinations(
@@ -308,6 +314,8 @@ def sample_counterfactual_family_data(
     style_random_fraction: float = 1.0,
     neutral_fraction: float = 0.0,
     random_gene_values: bool = False,
+    isolated_gene_fraction: float = 0.0,
+    interior_gene_fraction: float = 0.0,
     neutral_genome: TreeGenome | None = None,
     fixed_environment: EnvironmentSpec | None = None,
     environment_span: float = 0.0,
@@ -323,7 +331,10 @@ def sample_counterfactual_family_data(
     if pair_count < 1 or not 0 <= genome_span <= 1:
         raise ValueError("pair_count must be positive and genome_span within [0, 1]")
     background_span = genome_span if background_span is None else background_span
-    if not 0 <= background_span <= genome_span or not 0 <= style_random_fraction <= 1 or not 0 <= neutral_fraction <= 1:
+    if not 0 <= background_span <= genome_span or any(
+        not 0 <= fraction <= 1
+        for fraction in (style_random_fraction, neutral_fraction, isolated_gene_fraction, interior_gene_fraction)
+    ):
         raise ValueError("background span and sampling fractions are out of range")
     if style_seeds is not None:
         style_seeds = family_style_seeds({"family_style_seeds": list(style_seeds)})
@@ -350,11 +361,13 @@ def sample_counterfactual_family_data(
         family = TREE_FAMILIES[condition // len(names)]
         gene_name = names[condition % len(names)]
         neutral = genome_span == 0 or (neutral_fraction > 0 and rng.random() < neutral_fraction)
+        isolated = not neutral and isolated_gene_fraction > 0 and rng.random() < isolated_gene_fraction
+        interior = not neutral and (random_gene_values or (interior_gene_fraction > 0 and rng.random() < interior_gene_fraction))
         for attempt in range(128):
             sample_seed = int(rng.integers(0, 2**31))
             base = (replace(neutral_genome, family=family) if neutral and neutral_genome is not None else
-                    TreeGenome.random(sample_seed, family=family, span=0.0 if neutral else background_span, locked=locked))
-            if style_seeds is not None and (neutral or rng.random() >= style_random_fraction):
+                    TreeGenome.random(sample_seed, family=family, span=0.0 if neutral or isolated else background_span, locked=locked))
+            if style_seeds is not None and (neutral or isolated or rng.random() >= style_random_fraction):
                 base = replace(base, style_seed=int(rng.choice(style_seeds)))
             # Live edits need short and long moves at varied starting values,
             # including late in training when the curriculum spans the full range.
@@ -362,7 +375,7 @@ def sample_counterfactual_family_data(
             # After bounded retries, try interior values without relaxing the
             # mask minimums or changing the pair's family/controlled gene.
             values = (np.sort(rng.uniform(-genome_span, genome_span, 2))
-                      if (random_gene_values or attempt >= 32) and not neutral else (-genome_span, genome_span))
+                      if (interior or attempt >= 32) and not neutral else (-genome_span, genome_span))
             low = base if neutral else base.with_values({gene_name: float(values[0])})
             high = base if neutral else base.with_values({gene_name: float(values[1])})
             environment = fixed_environment or (EnvironmentSpec.random(int(rng.integers(0, 2**31)), span=environment_span) if environment_span else EnvironmentSpec())
@@ -383,7 +396,7 @@ def sample_counterfactual_family_data(
                 f"could not generate a {family}/{gene_name} counterfactual pair with minimum "
                 f"branch={minimum_branch_voxels} and leaf={minimum_leaf_voxels} voxel counts"
             )
-        if attempt >= 32 and not neutral and not random_gene_values:
+        if attempt >= 32 and not neutral and not interior:
             LOGGER.info("Using interior %s/%s gene values after rejected endpoint pairs", family, gene_name)
         genomes.extend((low, high))
         targets.extend(pair_targets)

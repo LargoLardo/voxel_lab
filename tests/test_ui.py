@@ -416,6 +416,7 @@ def test_phase_two_dashboard_keeps_curriculum_and_checkpoint_selection_in_yaml()
         pytest.skip("Node.js is required to execute the dashboard JavaScript regression check")
     functions = [re.search(r"function syncFamilyCurriculum\(.*?\n\}", HTML, re.DOTALL).group()]
     functions.append(re.search(r"const dependencySpecs=\{.*?\};", HTML, re.DOTALL).group())
+    functions.append(next(line for line in HTML.splitlines() if line.startswith("dependencySpecs['tree_family_finetune.yaml']=")))
     functions.extend(
         next(line for line in HTML.splitlines() if line.startswith(f"function {name}("))
         for name in ("yamlText", "yamlNumber", "setYamlText", "setDependencyCheckpoint", "syncDependencyCheckpoints", "syncSpecialistFamily", "specialistFamilyValue")
@@ -434,6 +435,8 @@ const state={runs:[
 ]};
 $('#configSelect').value='tree_family.yaml';
 """ + next(line for line in HTML.splitlines() if line.startswith("const specialistGenomePattern=")) + "\n".join(functions) + r"""
+for(const preset of ['tree_family.yaml','tree_family_finetune.yaml']){
+$('#configSelect').value=preset;
 for(const mode of ['full','basics','variation','transition','gene_transition']){
   $('#editor').value=`family_curriculum: ${mode}\ninitialize_from_checkpoint: runs/basic_families/checkpoints/best.pt\n`;
   syncDependencyCheckpoints();
@@ -448,6 +451,8 @@ for(const mode of ['full','basics','variation','transition','gene_transition']){
   assert.equal(yamlText('initialize_from_checkpoint'),'runs/specialist/checkpoints/best.pt');
   assert.equal(yamlText('family_curriculum'),mode);
 }
+}
+$('#configSelect').value='tree_family.yaml';
 $('#editor').value+='resume: old.pt\ninitialize_from_specialist: old.pt\n';
 setDependencyCheckpoint('runs/basic_families/checkpoints/best.pt');
 assert.doesNotMatch($('#editor').value,/^resume:|^initialize_from_specialist:/m);

@@ -60,6 +60,34 @@ def test_family_samples_keep_genome_target_environment_and_seed_paired():
     assert set(data.creation_methods) <= {"interpolation", "mutation"}
 
 
+@pytest.mark.parametrize("mode", ["full", "variation", "gene_transition"])
+def test_late_curriculum_retains_isolated_genes_and_interior_values(mode):
+    config = {"family_curriculum": mode, "family_style_seeds": [0, 970806]}
+    values = curriculum_values(7999, 8000, config)
+    data = sample_counterfactual_family_data(
+        64, 12, 53, genome_span=values["genome_span"],
+        **{**curriculum_sampling_options(values, config), "neutral_fraction": 0},
+    )
+    isolated, combined, interior, endpoints = [], [], [], []
+    for index, (low, high) in enumerate(zip(data.genomes[::2], data.genomes[1::2])):
+        name = FAMILY_GENE_NAMES[index % len(FAMILY_GENE_NAMES)]
+        assert low.with_values({name: high.value(name)}) == high
+        if sum(value != 0 for value in low.genes) == 1:
+            isolated.append(low)
+            assert low.style_seed in config["family_style_seeds"]
+        else:
+            combined.append(low)
+        (endpoints if low.value(name) == -1 and high.value(name) == 1 else interior).append(low)
+    assert isolated and combined and interior and endpoints
+
+
+@pytest.mark.parametrize("field", ["isolated_gene_fraction", "interior_gene_fraction"])
+@pytest.mark.parametrize("value", [-.1, 1.1, float("nan")])
+def test_gene_sampling_rejects_invalid_fractions(field, value):
+    with pytest.raises(ValueError, match="sampling fractions"):
+        sample_counterfactual_family_data(1, 12, 42, **{field: value})
+
+
 def test_initial_family_samples_are_balanced_at_narrow_span():
     first = sample_family_data(
         8, 16, 20, genome_span=0.01, interpolation_fraction=0, mutation_fraction=0,

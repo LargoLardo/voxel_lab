@@ -68,6 +68,15 @@ def test_tree_presets_form_a_parseable_checkpoint_pipeline():
     assert family["minimum_branch_voxels"] == 8
     assert family["minimum_leaf_voxels"] == 8
 
+    fine_tune = configs["tree_family_finetune.yaml"]
+    assert fine_tune["family_curriculum"] == "variation"
+    assert fine_tune["learning_rate"] == .0001
+    assert fine_tune["initialize_from_checkpoint"] == "runs/tree_family/checkpoints/best.pt"
+    assert "resume" not in fine_tune
+    assert fine_tune["initial_genome_span"] == 1
+    assert fine_tune["loss_weights"] == family["loss_weights"]
+    assert fine_tune["isolated_gene_fraction"] == fine_tune["interior_gene_fraction"] == .5
+
     environment = configs["tree_environment.yaml"]
     assert environment["damage_probability"] == 0.35
     assert environment["damage_min_age"] == 64
