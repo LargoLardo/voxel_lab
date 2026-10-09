@@ -771,12 +771,19 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 **{key: value for key, value in retention_options.items() if key not in {"layout", "device", "criteria"}},
                 "criteria": retention_options["criteria"].to_dict(), "tolerance": tolerance,
             }
+            if config.get("retain_initialized_base", False):
+                retention_settings["retain_initialized_base"] = True
             guard = transition_state.get("retention")
             if guard is not None and guard["settings"] != retention_settings:
                 raise ValueError("retention validation settings changed; use initialize_from_checkpoint for a new baseline")
             if guard is None:
                 LOGGER.info("Measuring original growth before variation/edit training (%d retention cases)", len(retention_cases))
                 baseline = {}
+                initialized_baseline = {}
+                neutral_cases = tuple(case for case in retention_cases if case.category == "neutral")
+                if config.get("retain_initialized_base", False):
+                    LOGGER.info("Measuring base shape at initialization to protect fine-tuning gains")
+                    initialized_baseline = retention_metrics(validate_panel(model, neutral_cases, **retention_options))
                 varied_cases = tuple(case for case in retention_cases if case.category == "variation")
                 if varied_cases:
                     baseline.update(retention_metrics(validate_panel(model, varied_cases, **retention_options)))
@@ -784,7 +791,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 try:
                     model.load_state_dict(transition_state["base_reference"]["model"])
                     baseline.update(retention_metrics(validate_panel(
-                        model, tuple(case for case in retention_cases if case.category == "neutral"), **retention_options,
+                        model, neutral_cases, **retention_options,
                         on_trial=lambda completed, total, trial: LOGGER.info("retention baseline case=%d/%d", completed, total),
                     )))
                 finally:
@@ -792,6 +799,12 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 guard = {"settings": retention_settings, "baseline": baseline,
                          "base_checkpoint": transition_state["base_reference"]["checkpoint"],
                          "base_step": transition_state["base_reference"]["step"]}
+                if initialized_baseline:
+                    guard["initialized_baseline"] = initialized_baseline
+                    for group, metrics in initialized_baseline.items():
+                        for metric in ("target_iou", "material_accuracy", "late_drift"):
+                            stricter = min if metric == "late_drift" else max
+                            baseline[group][metric] = stricter(baseline[group][metric], metrics[metric])
                 transition_state["retention"] = guard
             write_json(run / "metrics" / "retention_baseline.json", guard)
         context = None

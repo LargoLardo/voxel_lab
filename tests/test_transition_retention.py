@@ -116,6 +116,55 @@ def test_retention_cannot_hide_a_forgotten_family_or_nonfinite_state():
     assert "non-finite" in retention_failures(original, current, .05)[0]
 
 
+@pytest.mark.parametrize("mode", ["variation", "gene_transition"])
+@pytest.mark.parametrize("kind", ["tree_gene", "tree_family"])
+def test_finetune_protects_initial_gains_and_keeps_original_and_resume_baselines(tmp_path, monkeypatch, mode, kind):
+    from morphovoxel.model_3d import NeuralCA3D
+    from morphovoxel.validation import ValidationReport, ValidationTrial
+
+    # Initial checkpoint is better at shape, original base better at materials.
+    neutral_values = iter(((.93, .8), (.66, .95), (.87, .94), (.90, .94)))
+    def validation(model, panel, **kwargs):
+        iou, material = next(neutral_values) if panel[0].category == "neutral" else (.9, .95)
+        return ValidationReport(tuple(ValidationTrial(
+            case, 1, 1, True, False, 0., ("state_bound",),
+            dict(target_iou=iou, material_accuracy=material, late_drift=0., finite_state=1.), {},
+        ) for case in panel))
+    monkeypatch.setattr(trainer, "validate_panel", validation)
+    source_config = dict(model_kind=kind, family_curriculum="basics", materials=4,
+                         hidden_channels=1, model_width=4, fire_rate=1., environment_conditioning=False,
+                         tree_genome=TreeGenome(family="weeping", style_seed=42).to_dict())
+    model_type = NeuralCA3D if kind == "tree_gene" else TreeFamilyNCA3D
+    source = tmp_path / "source.pt"
+    save_checkpoint(source, model_type(6, 4, TreeGenome.model_size(), 1, 0), config=source_config)
+    config = dict(source_config, run_name="finetune", runs_root=str(tmp_path), family_curriculum=mode,
+                  initialize_from_checkpoint=str(source), retain_initialized_base=True,
+                  device="cpu", world_size=12, batch_size=2, iterations=2, rollout_steps=1,
+                  persistence_steps=1, transition_source_steps=1, validation_steps=1,
+                  validation_recovery_steps=1, validation_every=1, validation_fire_seeds=[71], family_style_seeds=[0])
+    run = trainer.train(config, dimensions=3, conditional=True)
+    latest = run / "checkpoints/latest.pt"
+    payload = torch.load(latest, weights_only=False)
+    guard = payload["transition_state"]["retention"]
+    for group, values in guard["baseline"].items():
+        if group.endswith("/neutral"):
+            assert values["target_iou"] == .93 and values["material_accuracy"] == .95
+            assert guard["initialized_baseline"][group]["target_iou"] == .93
+    rows = pd.read_csv(run / "metrics/retention_validation.csv")
+    assert not rows[rows.step == 1].eligible.any()
+    assert rows[rows.step == 2].eligible.all()
+    assert torch.load(run / "checkpoints/best.pt", weights_only=False)["step"] == 2
+
+    # A resume must not remeasure .90 and quietly lower the floor to .85.
+    neutral_values = iter(((.86, .94),))
+    config.pop("initialize_from_checkpoint")
+    trainer.train({**config, "resume": str(latest), "iterations": 1}, dimensions=3, conditional=True)
+    resumed = torch.load(latest, weights_only=False)
+    assert not resumed["validation"]["retention"]["eligible"]
+    assert resumed["transition_state"]["retention"] == guard
+    assert torch.load(run / "checkpoints/best.pt", weights_only=False)["step"] == 2
+
+
 def test_checkpoint_rank_includes_gene_response_even_when_strict_scores_tie():
     from dataclasses import replace
     from morphovoxel.training.transition import transition_rank
