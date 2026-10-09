@@ -149,12 +149,13 @@ def morphology_loss(
     prediction = occupancy.clamp(0, 1)
     soft_dice, soft_iou = _soft_overlap(prediction, target)
     state_excess = F.relu(state.abs() - state_limit).square().flatten(1)
+    occupancy_excess = F.relu(-occupancy).square() + F.relu(occupancy - 1).square()
     components = {
         # Equal foreground/background weighting prevents sparse 3D trees from
         # making an empty or averaged organism look deceptively inexpensive.
         "occupancy": ((foreground_error + background_error) * 0.5).mean(),
         "leakage": (occupancy * (1 - target)).square().mean(),
-        "occupancy_range": (F.relu(-occupancy).square() + F.relu(occupancy - 1).square()).mean(),
+        "occupancy_range": occupancy_excess.mean(),
         # Keep pressure on widespread violations and each organism's worst
         # spike: averaging alone hides isolated unstable voxels/channels.
         "magnitude": state_excess.mean() + state_excess.amax(1).mean(),
@@ -162,6 +163,9 @@ def morphology_loss(
         "soft_iou": soft_iou,
         "distance": (prediction * (1 - target) * targets.distance).mean(),
     }
+    # Opt in independently of the mean penalty for controlled fine-tuning.
+    if weights.get("occupancy_range_peak", 0.0):
+        components["occupancy_range_peak"] = occupancy_excess.flatten(1).amax(1).mean()
     # Ignore background in a fixed-shape loss instead of gathering occupied
     # voxels, which requires nonzero() and a GPU-to-CPU synchronization.
     components["material"] = F.cross_entropy(

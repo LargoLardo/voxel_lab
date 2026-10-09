@@ -75,7 +75,10 @@ def test_tree_presets_form_a_parseable_checkpoint_pipeline():
     assert "resume" not in fine_tune
     assert fine_tune["initial_genome_span"] == 1
     assert fine_tune["loss_weights"] == family["loss_weights"]
-    assert fine_tune["isolated_gene_fraction"] == fine_tune["interior_gene_fraction"] == .5
+    assert fine_tune["isolated_gene_fraction"] == .75
+    assert fine_tune["interior_gene_fraction"] == .5
+    assert fine_tune["iterations"] == 1000 and fine_tune["validation_every"] == 250
+    assert fine_tune["retain_initialized_base"] is True
 
     environment = configs["tree_environment.yaml"]
     assert environment["damage_probability"] == 0.35

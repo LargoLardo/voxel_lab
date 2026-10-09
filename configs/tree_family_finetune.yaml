@@ -1,5 +1,5 @@
 # Fine-tune a trained variation checkpoint with a fresh optimizer at lower LR.
-# Select your strongest best.pt; architecture, tree scope and base reference are inherited.
+# Select a checkpoint using shape, gene response and state bounds, not just loss.
 # Start with the learned full gene range; isolated/interior examples remain mixed in.
 run_name: tree_family_finetune
 dimensions: 3
@@ -19,13 +19,15 @@ transition_source_steps: 128
 # Best checkpoints may lose at most .05 IoU/material accuracy or gain .05 drift
 # per family/group. The legacy option name also applies to variation/full.
 transition_retention_tolerance: 0.05
+# Protect gains in the input checkpoint as well as the original specialist/base.
+retain_initialized_base: true
 basic_family_fraction: 0.25
 family_style_seeds: [0, 970806, 1941611, 2912417]
 neutral_fraction: 0.25
 combination_start_fraction: 0.0
 # Among nonneutral pairs, retain isolated genes on familiar styles and mix
 # intermediate values with full-range endpoint pairs throughout variation.
-isolated_gene_fraction: 0.5
+isolated_gene_fraction: 0.75
 interior_gene_fraction: 0.5
 seed: 42
 device: auto
@@ -36,7 +38,7 @@ hidden_channels: 8
 model_width: 64
 # Optional: hidden_layers: [32, 32] (must match the initialization checkpoint).
 fire_rate: 0.5
-iterations: 4000
+iterations: 1000
 rollout_steps: [24, 48]
 pool_size: 0  # Auto: 16 for a specialist's genes, 64 for all families.
 fresh_fraction: 0.25
@@ -44,6 +46,8 @@ learning_rate: 0.0001
 gradient_clip: 1.0
 state_limit: 4.0
 loss_weights: {occupancy: 1.0, material: 0.2, leakage: 0.5, occupancy_range: 2.0, magnitude: 0.01, soft_dice: 1.0, soft_iou: 0.5, distance: 0.5, height: 0.25, width: 0.25, volume: 0.5, centroid: 0.25, trunk_dice: 0.25, branch_dice: 2.0, leaf_dice: 1.0}
+# Separate stability experiment: add occupancy_range_peak: 0.1 to loss_weights.
+# Omitted by default so gene-practice experiments keep their loss unchanged.
 minimum_branch_voxels: 8
 minimum_leaf_voxels: 8
 counterfactual_weight: 1.0
@@ -60,7 +64,7 @@ genome_widen_fraction: 0.45
 # introduced deliberately by tree_environment.yaml after regeneration.
 environment_start_fraction: 1.0
 validation_steps: 256
-validation_every: 500
+validation_every: 250
 validation_fire_seeds: [100042, 100043]
 validation_random_count: 2
 validation_interpolation_steps: 2

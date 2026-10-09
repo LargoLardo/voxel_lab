@@ -122,5 +122,28 @@ def test_sparse_foreground_is_not_diluted_by_empty_background():
     assert components["occupancy"].item() == pytest.approx(0.5)
 
 
+@pytest.mark.parametrize("shape", [(4, 4), (16, 16), (4, 4, 4), (16, 16, 16)])
+def test_optional_occupancy_peak_penalty_keeps_sparse_gradients_without_changing_default(shape):
+    layout = StateLayout(materials=2, hidden=1)
+    state = torch.zeros(2, layout.channels, *shape)
+    origin = (0,) * len(shape)
+    state[(0, 0, *origin)] = -.5
+    state[(1, 0, *origin)] = 1.25
+    state.requires_grad_()
+    target = torch.zeros(2, *shape)
+    default, components = morphology_loss(state, target, target.long(), layout)
+    disabled, _ = morphology_loss(state, target, target.long(), layout, {"occupancy_range_peak": 0.})
+    torch.testing.assert_close(default, disabled)
+    assert "occupancy_range_peak" not in components
+    enabled, components = morphology_loss(state, target, target.long(), layout, {"occupancy_range_peak": .1})
+    peak = components["occupancy_range_peak"]
+    assert peak.item() == pytest.approx((.5 ** 2 + .25 ** 2) / 2)
+    torch.testing.assert_close(enabled - default, .1 * peak)
+    peak.backward()
+    assert state.grad[(0, 0, *origin)] == -.5
+    assert state.grad[(1, 0, *origin)] == .25
+    assert torch.count_nonzero(state.grad) == 2
+
+
 def test_stability_loss_does_not_hide_out_of_range_drift():
     assert stability_loss(torch.tensor([[[[2.0]]]]), torch.tensor([[[[3.0]]]])).item() == 1
