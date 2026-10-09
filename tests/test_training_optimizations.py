@@ -393,6 +393,42 @@ def test_prepared_environment_preserves_states_and_all_gradients(device, model_t
             torch.optim.SGD(net.parameters(), lr=.1).step()
 
 
+@pytest.mark.parametrize("device", DEVICES)
+def test_gene_only_rollout_cache_preserves_gradients_across_updates(device, monkeypatch):
+    seed_everything(72, deterministic=device != "mps")
+    model = NeuralCA3D(5, genome_size=15, hidden_layers=[8, 5], fire_rate=1).to(device)
+    reference = copy.deepcopy(model)
+    reference.prepare_conditioning = lambda genome, context: None
+    calls = []
+    prepare = model.prepare_conditioning
+    def observed(genome, context):
+        calls.append(tuple(context.shape))
+        return prepare(genome, context)
+    monkeypatch.setattr(model, "prepare_conditioning", observed)
+    initial = torch.rand(2, 5, 3, 4, 5, device=device) + .2
+    for update in range(2):
+        inherited = tree_genome_tensor([TreeGenome.random(update + n) for n in range(2)], device=device)
+        states, gradients = [], []
+        for net in (model, reference):
+            net.zero_grad(set_to_none=True)
+            state = initial.clone().requires_grad_()
+            genome = inherited.clone().requires_grad_()
+            grown, _ = rollout(net, state, 3, genome, shared_fire_pairs=True)
+            grown.square().mean().backward()
+            states.append(grown.detach())
+            gradients.append([value.grad for value in (state, genome, *net.parameters())])
+        torch.testing.assert_close(states[0], states[1])
+        for actual, expected in zip(*gradients):
+            torch.testing.assert_close(actual, expected, atol=1e-7, rtol=1e-4)
+        for net in (model, reference):
+            torch.optim.SGD(net.parameters(), lr=.1).step()
+    assert calls == ([(2, 0, 1, 1, 1)] * 2 if device == "mps" else [])
+    rollout(model, initial, 2, inherited, on_step=lambda step, value: None)
+    with torch.no_grad():
+        rollout(model, initial, 2, inherited)
+    assert len(calls) == (2 if device == "mps" else 0)
+
+
 @pytest.mark.parametrize("model_type", [NeuralCA3D, TreeFamilyNCA3D])
 @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="Apple GPU unavailable")
 def test_rollout_prepares_fixed_environment_once_and_keeps_dynamic_context(model_type, monkeypatch):
