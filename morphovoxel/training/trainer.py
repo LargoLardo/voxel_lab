@@ -546,7 +546,9 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 else:
                     recipe.pop(key, None)
             recipe["neutral_style_seeds"] = original_recipe.get("neutral_style_seeds", original_recipe["style_seeds"])
-    run = create_run_directory(str(config.get("run_name", f"phase{dimensions}d")), config.get("runs_root", "runs"))
+    run = create_run_directory(
+        str(config.get("run_name", f"phase{dimensions}d")), config.get("runs_root", "runs"), resume=config.get("resume"),
+    )
     save_config(config, run / "config.yaml")
     run_metadata, started = metadata(seed, model, device), time.perf_counter()
     run_metadata.update({
@@ -687,6 +689,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
     guard = None
     final_state = final_target = final_materials = None
     best_score, last_validation = float("-inf"), None
+    best_rank = (float("-inf"), float("-inf"))
     previous_stage = None
     best_checkpoint = run / "checkpoints" / "best.pt"
     if restored and best_checkpoint.is_file():
@@ -704,7 +707,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         old_protocol = ((tree_conditioned or tree_specialist)
                         and (incumbent.get("config") or {}).get("tree_validation_version") != VALIDATION_SCHEMA_VERSION)
         # Scores without the same original-growth baseline are not comparable.
-        comparable = not (old_targets or old_protocol) and (not rehearsal_training or (
+        comparable = not (old_targets or old_protocol) and (not rehearsal_training or old_validation.get("curriculum_stage") == "basics" or (
             (incumbent.get("transition_state") or {}).get("retention") == transition_state.get("retention")
             and "retention" in old_validation))
         if old_targets or old_protocol or (rehearsal_training and validation_steps > 0 and "retention" not in old_validation and curriculum_values(
@@ -719,8 +722,10 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
         if old_settings == new_settings and old_validation and comparable:
             last_validation = incumbent["validation"]
             best_score = float(last_validation.get("best_worst_genome_persistence_score", float("-inf")))
+            saved_report = last_validation.get("persistence_report")
+            best_rank = transition_rank(saved_report) if saved_report else (best_score, 0.)
             previous_stage = last_validation.get("curriculum_stage")
-            if rehearsal_training:
+            if rehearsal_training and (incumbent.get("transition_state") or {}).get("best_rank") is not None:
                 transition_state["best_rank"] = incumbent["transition_state"]["best_rank"]
         del incumbent
     if rehearsal_training and transition_state.get("best_rank") is not None:
@@ -741,6 +746,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             LOGGER.info("Phase 2 curriculum: %s", current_stage)
             # Scores on neutral families and on varied genomes are not comparable.
             best_score, last_validation = float("-inf"), None
+            best_rank = (float("-inf"), float("-inf"))
             previous_stage = current_stage
         rehearsal_active = rehearsal_training and current_stage != "basics"
         if rehearsal_active and "base_reference" not in transition_state:
@@ -804,7 +810,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             sampling_options = replay_sampling_options(recipe, neutral=batch_kind == "neutral")
         if active_pool and tree_conditioned:
             cursor = transition_state["cursors"][batch_kind] if rehearsal_training else pair_cursor
-            pool_batch = active_pool.sample_stratified_pairs(batch, cursor, device)
+            pool_batch = active_pool.sample_stratified_pairs(batch, cursor, device, include_environments=bool(context_channels))
             if rehearsal_training:
                 transition_state["cursors"][batch_kind] += batch // 2
             else:
@@ -816,8 +822,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
             if tree_conditioned:
                 if any(value is None for value in (
                     pool_batch.target_occupancy, pool_batch.target_materials,
-                    pool_batch.environments, pool_batch.style_seeds,
-                )):
+                    pool_batch.style_seeds,
+                )) or (context_channels and pool_batch.environments is None):
                     raise ValueError("tree-family pool batch lost its paired identity")
                 genomes = pool_batch.genomes
                 target = pool_batch.target_occupancy
@@ -1191,7 +1197,8 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                 )
             if validation_records:
                 _write_metrics(run / "metrics" / "persistence_validation.csv", validation_records)
-            promote = worst_score >= best_score
+            rank = transition_rank(report) if tree_conditioned or tree_specialist else (worst_score, 0.)
+            promote = rank > best_rank if tree_conditioned or tree_specialist else worst_score >= best_score
             if rehearsal_active:
                 LOGGER.info("Checking original growth retention step=%d", step + 1)
                 retained = retention_metrics(validate_panel(
@@ -1201,7 +1208,6 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                     ),
                 ))
                 failures = retention_failures(guard["baseline"], retained, tolerance)
-                rank = transition_rank(report)
                 promote = not failures and rank > tuple(transition_state.get("best_rank", [-1., -1.]))
                 last_validation["retention"] = {
                     "eligible": not failures, "failure_reasons": failures,
@@ -1219,6 +1225,7 @@ def train(config: dict, *, dimensions: int, conditional: bool = False) -> Path:
                     transition_state["best_rank"] = list(rank)
             if promote:
                 best_score = worst_score
+                best_rank = rank
                 best_validation = {**last_validation, "best_worst_genome_persistence_score": best_score}
                 save_checkpoint(
                     run / "checkpoints" / "best.pt", model, optimizer, step=step + 1,

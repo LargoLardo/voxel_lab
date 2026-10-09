@@ -20,6 +20,55 @@ from morphovoxel.training.trainer import (
 )
 
 
+@pytest.mark.parametrize("kind,mode", [("tree_specialist", None), ("tree_family", "basics"), ("tree_family", None)])
+def test_tree_best_uses_shape_quality_on_zero_score_ties_and_resume(tmp_path, monkeypatch, kind, mode):
+    from morphovoxel.training import trainer
+    from morphovoxel.validation import ValidationReport, ValidationTrial
+
+    qualities = iter((.8, .2, .1, .9))
+    def validation(model, panel, **kwargs):
+        quality = next(qualities)
+        return ValidationReport(tuple(ValidationTrial(
+            case, 1, 1, True, False, 0., ("state_bound",), {"target_iou": quality}, {},
+        ) for case in panel))
+    monkeypatch.setattr(trainer, "validate_panel", validation)
+    config = dict(run_name="ranked", runs_root=str(tmp_path), model_kind=kind,
+                  device="cpu", world_size=12, batch_size=2, materials=4, hidden_channels=1,
+                  model_width=4, fire_rate=1., environment_conditioning=False, iterations=2,
+                  rollout_steps=1, persistence_steps=0, validation_steps=1, validation_every=1,
+                  validation_recovery_steps=1, validation_fire_seeds=[1], family_style_seeds=[0])
+    if mode:
+        config["family_curriculum"] = mode
+    run = train(config, dimensions=3, conditional=kind == "tree_family")
+    best = run / "checkpoints/best.pt"
+    assert torch.load(best, weights_only=False)["step"] == 1
+    for expected in (1, 4):
+        train({**config, "resume": str(run / "checkpoints/latest.pt"), "iterations": 1},
+              dimensions=3, conditional=kind == "tree_family")
+        assert torch.load(best, weights_only=False)["step"] == expected
+
+
+@pytest.mark.parametrize("external_resume", [False, True])
+def test_reusing_run_directory_cannot_overwrite_configuration_or_weights(tmp_path, external_resume):
+    from shutil import copyfile
+
+    config = dict(run_name="protected", runs_root=str(tmp_path), device="cpu", world_size=12,
+                  batch_size=1, materials=3, hidden_channels=1, model_width=4,
+                  iterations=1, rollout_steps=1, validation_steps=0)
+    run = train(config, dimensions=2)
+    paths = [run / "config.yaml", run / "checkpoints/latest.pt"]
+    before = [path.read_bytes() for path in paths]
+    if external_resume:
+        other = tmp_path / "unrelated.pt"
+        copyfile(paths[1], other)
+        config["resume"] = str(other)
+    else:
+        config["model_width"] = 6
+    with pytest.raises(FileExistsError, match="Choose a new run_name"):
+        train(config, dimensions=2)
+    assert [path.read_bytes() for path in paths] == before
+
+
 def test_step_range_rejects_negative_scalar():
     try:
         _step_range(-1, (1, 2))

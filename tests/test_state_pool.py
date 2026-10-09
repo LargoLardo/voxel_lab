@@ -45,6 +45,22 @@ def test_pool_keeps_tree_target_environment_and_style_identity_paired():
     assert pool.genomes[1, 0] == 9 and pool.style_seeds[1] == 109 and pool.ages[1] == 0
 
 
+def test_pair_sampling_skips_unused_environment_work_but_retains_checkpoint_data(monkeypatch):
+    ids = torch.arange(4).repeat_interleave(2)
+    pool = StatePool(torch.ones(8, 1), ids[:, None], environments=torch.ones(8, 12, 3, 3, 3),
+                     pair_ids=ids, condition_ids=ids)
+    original = pool._sample
+    def sample(value, indices, device):
+        assert value is not pool.environments
+        return original(value, indices, device)
+    monkeypatch.setattr(pool, "_sample", sample)
+    batch = pool.sample_stratified_pairs(4, 0, include_environments=False)
+    assert batch.environments is None
+    restored = StatePool(**pool.state_dict())
+    assert restored.environments.device.type == "cpu"
+    torch.testing.assert_close(restored.sample_stratified_pairs(4, 0).environments, pool.environments[batch.indices])
+
+
 def test_pool_appends_a_cpu_backed_paired_suffix():
     def make_pool(ids, device="cpu"):
         ids = torch.tensor(ids, device=device)
@@ -88,6 +104,30 @@ def test_pair_sampling_includes_underrepresented_branch_leaf_strata():
         for pair in batch.target_materials.view(4, 2, 2, 2, 2)
     }
     assert signatures == {(False, False), (False, True), (True, False), (True, True)}
+
+
+@pytest.mark.parametrize("sizes", [(2, 2, 2), (1, 3, 5), (1, 1, 1, 5)])
+@pytest.mark.parametrize("batch_size", [2, 4, 8])
+def test_pair_sampling_visits_every_condition_across_bucket_wraps(sizes, batch_size):
+    ids = torch.arange(sum(sizes)).repeat_interleave(2)
+    materials = torch.zeros(len(ids), 2, 2, 2, dtype=torch.long)
+    offset = 0
+    for bucket, size in enumerate(sizes):
+        if bucket & 1:
+            materials[offset:offset + 2 * size, 0, 0, 0] = 2
+        if bucket & 2:
+            materials[offset:offset + 2 * size, 0, 0, 1] = 3
+        offset += 2 * size
+    pool = StatePool(torch.ones(len(ids), 1), ids[:, None], target_materials=materials,
+                     condition_ids=ids, pair_ids=ids)
+    seen = set()
+    for cursor in range(0, 64 * batch_size // 2, batch_size // 2):
+        batch = pool.sample_stratified_pairs(batch_size, cursor)
+        selected = batch.pair_ids[::2].tolist()
+        assert len(set(selected)) == batch_size // 2
+        torch.testing.assert_close(batch.pair_ids[::2], batch.pair_ids[1::2])
+        seen.update(selected)
+    assert seen == set(range(sum(sizes)))
 
 
 def test_pair_metadata_cache_invalidates_replacements_appends_and_restores():

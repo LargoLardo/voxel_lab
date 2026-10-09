@@ -192,15 +192,18 @@ def retention_failures(baseline: dict, current: dict, tolerance: float) -> list[
 
 
 def transition_rank(report) -> tuple[float, float]:
-    """Break strict-score ties with shape, live edits and paired gene responses."""
-    destination = sum(trial.metrics["target_iou"] for trial in report.trials) / len(report.trials)
-    edits = [trial.metrics["transition_edit_accuracy"] for trial in report.trials
-             if trial.metrics.get("transition_edited_voxels", 0) > 0]
-    responses = [trial.metrics["gene_response_accuracy"] for trial in report.trials
-                 if trial.metrics.get("gene_response_edited_voxels", 0) > 0]
+    """Rank tree validation, including serialized reports from older checkpoints."""
+    metrics = ([trial["metrics"] for trial in report["trials"]] if isinstance(report, dict)
+               else [trial.metrics for trial in report.trials])
+    score = report["score"] if isinstance(report, dict) else report.score
+    destination = sum(values["target_iou"] for values in metrics) / len(metrics)
+    edits = [values["transition_edit_accuracy"] for values in metrics
+             if values.get("transition_edited_voxels", 0) > 0]
+    responses = [values["gene_response_accuracy"] for values in metrics
+                 if values.get("gene_response_edited_voxels", 0) > 0]
     quality = [destination]
     if edits:
         quality.append(sum(edits) / len(edits))
     if responses:
         quality.append(sum(responses) / len(responses))
-    return report.score, min(quality)
+    return score, min(quality)

@@ -80,7 +80,7 @@ class StatePool:
         indices = torch.randperm(len(self.states), generator=generator)[:count]
         return self._batch(indices, device)
 
-    def _batch(self, indices: torch.Tensor, device: str | torch.device) -> PoolBatch:
+    def _batch(self, indices: torch.Tensor, device: str | torch.device, *, include_environments: bool = True) -> PoolBatch:
         return PoolBatch(
             indices.to(device),
             self.states[indices].to(device),
@@ -88,7 +88,7 @@ class StatePool:
             self.ages[indices].to(device),
             self._sample(self.target_occupancy, indices, device),
             self._sample(self.target_materials, indices, device),
-            self._sample(self.environments, indices, device),
+            self._sample(self.environments, indices, device) if include_environments else None,
             self._sample(self.environment_specs, indices, "cpu"),
             self._sample(self.style_seeds, indices, device),
             self._sample(self.condition_ids, indices, device),
@@ -96,7 +96,9 @@ class StatePool:
             self._sample(self.target_distances, indices, device),
         )
 
-    def sample_stratified_pairs(self, count: int, cursor: int, device: str | torch.device = "cpu") -> PoolBatch:
+    def sample_stratified_pairs(
+        self, count: int, cursor: int, device: str | torch.device = "cpu", *, include_environments: bool = True,
+    ) -> PoolBatch:
         """Cycle through counterfactual pairs, balancing branch/leaf presence."""
         if count < 2 or count % 2 or count > len(self.states) or self.pair_ids is None or self.condition_ids is None:
             raise ValueError("stratified pair sampling needs an even count and paired pool metadata")
@@ -133,7 +135,10 @@ class StatePool:
                 key = keys[(cursor + key_offset) % len(keys)]
                 values = buckets[key]
                 for value_offset in range(len(values)):
-                    value = values[(cursor // max(1, len(keys)) + round_index + value_offset) % len(values)]
+                    # A batch can wrap past the last bucket. Include that wrap
+                    # in this bucket's turn, or some pairs repeat while others
+                    # are never visited when the batch spans fewer buckets.
+                    value = values[((cursor + key_offset) // len(keys) + round_index + value_offset) % len(values)]
                     if value[1] not in used:
                         used.add(value[1])
                         selected.append(value[2])
@@ -141,7 +146,7 @@ class StatePool:
                 if len(selected) == pair_count:
                     break
             round_index += 1
-        return self._batch(torch.cat(selected), device)
+        return self._batch(torch.cat(selected), device, include_environments=include_environments)
 
     def commit(self, batch: PoolBatch, states: torch.Tensor, elapsed: int) -> None:
         if len(states) != len(batch.indices):

@@ -12,8 +12,16 @@ import torch
 from PIL import Image
 
 
-def create_run_directory(name: str, root: str | Path = "runs") -> Path:
+def create_run_directory(name: str, root: str | Path = "runs", *, resume: str | Path | None = None) -> Path:
     run = Path(root) / name
+    try:
+        run.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        if resume is None or Path(resume).resolve().parent != (run / "checkpoints").resolve():
+            raise FileExistsError(
+                f"Run directory already exists: {run}. Choose a new run_name, "
+                "or resume a checkpoint from this run to continue it."
+            ) from None
     for child in ("checkpoints", "rollouts", "metrics", "visualizations", "targets"):
         (run / child).mkdir(parents=True, exist_ok=True)
     return run
